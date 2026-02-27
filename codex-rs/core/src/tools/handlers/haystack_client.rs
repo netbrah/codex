@@ -193,6 +193,9 @@ pub async fn ensure_workspace(workspace_path: &Path) -> Result<(), String> {
             filters: CreateWorkspaceFilters {
                 exclude: ExcludeFilters {
                     use_git_ignore: true,
+                    // Sensible defaults matching the Haystack VSCode extension.
+                    // The user can reconfigure via the Haystack API or its
+                    // config file if their project needs different patterns.
                     customized: vec![
                         "node_modules".to_string(),
                         ".git".to_string(),
@@ -245,6 +248,9 @@ pub async fn search(
         .json(&SearchContentRequest {
             workspace: ws,
             query: pattern.to_string(),
+            // Haystack doesn't support ripgrep-style "smart case", so we
+            // default to case-insensitive which is the more common expectation
+            // for code search.
             case_sensitive: false,
             filters: SearchFilters {
                 include: include.map(str::to_string),
@@ -278,13 +284,8 @@ pub async fn search(
     let files: Vec<String> = data
         .results
         .into_iter()
-        .filter_map(|r| {
-            if seen.insert(r.file.clone()) {
-                Some(r.file)
-            } else {
-                None
-            }
-        })
+        .filter(|r| seen.insert(r.file.clone()))
+        .map(|r| r.file)
         .take(limit)
         .collect();
 

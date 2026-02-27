@@ -107,16 +107,20 @@ fi
 # ── Start the server ──
 echo "Starting Haystack server on port $HAYSTACK_PORT..."
 "$HAYSTACK_BIN" server start &
+HAYSTACK_PID=$!
 
 # Wait a moment and verify
 sleep 2
 if curl -sf "http://127.0.0.1:${HAYSTACK_PORT}/health" > /dev/null 2>&1; then
   echo ""
-  echo "✓ Haystack is running on http://127.0.0.1:${HAYSTACK_PORT}"
+  echo "✓ Haystack is running on http://127.0.0.1:${HAYSTACK_PORT} (PID: $HAYSTACK_PID)"
   echo ""
   echo "Add this to your shell profile to enable Codex integration:"
   echo ""
   echo "  export CODEX_HAYSTACK_URL=\"http://127.0.0.1:${HAYSTACK_PORT}\""
+  echo ""
+  echo "To stop the server later:"
+  echo "  curl -X POST http://127.0.0.1:${HAYSTACK_PORT}/api/v1/server/stop"
   echo ""
 else
   echo ""
@@ -125,4 +129,7 @@ else
   echo ""
   echo "Once running, set:"
   echo "  export CODEX_HAYSTACK_URL=\"http://127.0.0.1:${HAYSTACK_PORT}\""
+  echo ""
+  echo "To stop the server:"
+  echo "  curl -X POST http://127.0.0.1:${HAYSTACK_PORT}/api/v1/server/stop"
 fi
