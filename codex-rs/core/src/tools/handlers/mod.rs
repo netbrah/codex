@@ -2,6 +2,7 @@ pub(crate) mod agent_jobs;
 pub mod apply_patch;
 mod dynamic;
 mod grep_files;
+pub(crate) mod haystack_client;
 mod js_repl;
 mod list_dir;
 mod mcp;

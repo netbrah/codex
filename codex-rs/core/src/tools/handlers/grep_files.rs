@@ -11,6 +11,7 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::haystack_client;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -82,8 +83,28 @@ impl ToolHandler for GrepFilesHandler {
             }
         });
 
-        let search_results =
-            run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd).await?;
+        let search_results = if haystack_client::is_enabled() {
+            haystack_client::ensure_workspace(&search_path).await;
+            haystack_client::maybe_sync_nfs_workspace(&search_path).await;
+            match haystack_client::run_haystack_search(
+                pattern,
+                include.as_deref(),
+                &search_path,
+                limit,
+                &turn.cwd,
+            )
+            .await
+            {
+                Ok(results) => results,
+                Err(e) => {
+                    tracing::debug!("haystack search failed, falling back to rg: {e}");
+                    run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd)
+                        .await?
+                }
+            }
+        } else {
+            run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd).await?
+        };
 
         if search_results.is_empty() {
             Ok(ToolOutput::Function {
