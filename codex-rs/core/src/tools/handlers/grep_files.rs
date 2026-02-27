@@ -15,6 +15,8 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
+use super::haystack_client;
+
 pub struct GrepFilesHandler;
 
 const DEFAULT_LIMIT: usize = 100;
@@ -82,8 +84,19 @@ impl ToolHandler for GrepFilesHandler {
             }
         });
 
-        let search_results =
-            run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd).await?;
+        // Try Haystack first, fall back to ripgrep.
+        let search_results = if haystack_client::is_enabled() {
+            match haystack_search(pattern, include.as_deref(), &search_path, limit).await {
+                Ok(results) => results,
+                Err(e) => {
+                    tracing::warn!("haystack search failed, falling back to rg: {e}");
+                    run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd)
+                        .await?
+                }
+            }
+        } else {
+            run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd).await?
+        };
 
         if search_results.is_empty() {
             Ok(ToolOutput::Function {
@@ -104,6 +117,17 @@ async fn verify_path_exists(path: &Path) -> Result<(), FunctionCallError> {
         FunctionCallError::RespondToModel(format!("unable to access `{}`: {err}", path.display()))
     })?;
     Ok(())
+}
+
+/// Attempt a search via Haystack. Ensures the workspace is registered first.
+async fn haystack_search(
+    pattern: &str,
+    include: Option<&str>,
+    search_path: &Path,
+    limit: usize,
+) -> Result<Vec<String>, String> {
+    haystack_client::ensure_workspace(search_path).await?;
+    haystack_client::search(search_path, pattern, include, limit).await
 }
 
 async fn run_rg_search(
