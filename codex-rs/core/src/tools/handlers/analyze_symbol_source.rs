@@ -18,6 +18,11 @@ use crate::tools::registry::ToolKind;
 #[cfg(feature = "clang-graph")]
 use super::clang_graph::{CallGraph, CompileDbLoader, TuParser};
 
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::{
+    BfsConfig, BfsPriority, BfsResult, ClangEngine, bfs_call_graph,
+};
+
 use super::dir_stats::estimate_scope_file_count;
 use super::dir_stats::load_dir_stats;
 use super::search_rg::make_scope_tempfile;
@@ -45,6 +50,31 @@ fn default_true() -> bool {
     true
 }
 
+fn default_max_depth() -> u32 {
+    0
+}
+
+fn default_max_nodes() -> usize {
+    200
+}
+
+fn default_max_edges() -> usize {
+    500
+}
+
+/// Engine selection for call graph analysis.
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum EngineChoice {
+    /// Auto-detect: use clang if available, otherwise heuristic.
+    #[default]
+    Auto,
+    /// Force libclang-based analysis (fails if unavailable).
+    Clang,
+    /// Force ripgrep heuristic analysis.
+    Heuristic,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AnalyzeSymbolSourceArgs {
@@ -63,6 +93,18 @@ struct AnalyzeSymbolSourceArgs {
     include_tests: bool,
     #[serde(default)]
     verbose: bool,
+    /// Depth of the call graph traversal (0 = legacy, 1-2 = BFS graph).
+    #[serde(default = "default_max_depth")]
+    max_depth: u32,
+    /// Engine to use: "auto", "clang", or "heuristic".
+    #[serde(default)]
+    engine: EngineChoice,
+    /// Maximum nodes in the graph output.
+    #[serde(default = "default_max_nodes")]
+    max_nodes: usize,
+    /// Maximum edges in the graph output.
+    #[serde(default = "default_max_edges")]
+    max_edges: usize,
 }
 
 #[derive(Serialize)]
@@ -110,10 +152,88 @@ struct AnalysisOutput {
     /// When true, the results were validated/enhanced by libclang AST analysis.
     #[serde(rename = "clangEnhanced", skip_serializing_if = "is_false")]
     clang_enhanced: bool,
+    /// Optional depth-limited BFS call graph (populated when maxDepth > 0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph: Option<GraphOutput>,
 }
 
 fn is_false(b: &bool) -> bool {
     !b
+}
+
+/// Serializable BFS graph output, wrapping the types from `bfs_traversal`.
+///
+/// We use our own thin struct so the output is stable even if the internal
+/// BFS types evolve.  The `From<BfsResult>` conversion is feature-gated
+/// below.
+#[derive(Serialize)]
+struct GraphOutput {
+    nodes: Vec<GraphNode>,
+    edges: Vec<GraphEdge>,
+    #[serde(rename = "maxDepthReached")]
+    max_depth_reached: u32,
+    truncated: bool,
+    engine: String,
+}
+
+#[derive(Serialize)]
+struct GraphNode {
+    id: String,
+    name: String,
+    file: String,
+    line: u32,
+    depth: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usr: Option<String>,
+    #[serde(rename = "isDefinition")]
+    is_definition: bool,
+}
+
+#[derive(Serialize)]
+struct GraphEdge {
+    from: String,
+    to: String,
+    #[serde(rename = "callType")]
+    call_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<u32>,
+}
+
+#[cfg(feature = "clang-graph")]
+impl From<BfsResult> for GraphOutput {
+    fn from(r: BfsResult) -> Self {
+        Self {
+            nodes: r
+                .nodes
+                .into_iter()
+                .map(|n| GraphNode {
+                    id: n.id,
+                    name: n.name,
+                    file: n.file,
+                    line: n.line,
+                    depth: n.depth,
+                    usr: n.usr,
+                    is_definition: n.is_definition,
+                })
+                .collect(),
+            edges: r
+                .edges
+                .into_iter()
+                .map(|e| GraphEdge {
+                    from: e.from,
+                    to: e.to,
+                    call_type: e.call_type,
+                    file: e.file,
+                    line: e.line,
+                })
+                .collect(),
+            max_depth_reached: r.max_depth_reached,
+            truncated: r.truncated,
+            engine: r.engine,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -286,6 +406,27 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
             }
         };
 
+        // Phase 5 (optional): BFS call graph when max_depth > 0.
+        let graph: Option<GraphOutput> = if args.max_depth > 0 {
+            #[cfg(feature = "clang-graph")]
+            {
+                run_bfs_phase(
+                    &scope_path,
+                    &base_name,
+                    &definition,
+                    &callers,
+                    &callees,
+                    &args,
+                )
+            }
+            #[cfg(not(feature = "clang-graph"))]
+            {
+                None
+            }
+        } else {
+            None
+        };
+
         let total_ms = total_start.elapsed().as_millis() as u64;
 
         let timing = if args.verbose {
@@ -314,6 +455,7 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
             error: None,
             timing,
             clang_enhanced,
+            graph,
         };
 
         let json = serde_json::to_string_pretty(&output).map_err(|e| {
@@ -419,6 +561,7 @@ fn make_too_broad_output(symbol: &str, scope_path: &Path, count: usize) -> Funct
         )),
         timing: None,
         clang_enhanced: false,
+        graph: None,
     };
     let json =
         serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{\"success\":false}".to_string());
@@ -440,6 +583,7 @@ fn make_building_output(symbol: &str) -> FunctionToolOutput {
         ),
         timing: None,
         clang_enhanced: false,
+        graph: None,
     };
     let json =
         serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{\"success\":false}".to_string());
@@ -676,6 +820,97 @@ fn read_source_snippet_sync(file: &str, line_number: u32, context_lines: usize) 
     let start = zero_idx.saturating_sub(2);
     let end = (zero_idx + context_lines).min(lines.len());
     Some(lines[start..end].join("\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Optional BFS call graph (gated behind `clang-graph` feature)
+// ---------------------------------------------------------------------------
+
+/// Run the depth-limited BFS call graph traversal.
+///
+/// Uses the already-computed heuristic callers/callees as seed data and
+/// optionally initializes a ClangEngine for AST-verified graph expansion.
+/// Returns `None` if the traversal cannot start (e.g., no definition found).
+#[cfg(feature = "clang-graph")]
+fn run_bfs_phase(
+    scope_path: &Path,
+    base_name: &str,
+    definition: &Option<DefinitionResult>,
+    callers: &[CallerResult],
+    callees: &[CalleeResult],
+    args: &AnalyzeSymbolSourceArgs,
+) -> Option<GraphOutput> {
+    let def = definition.as_ref()?;
+
+    // Attempt to initialize ClangEngine (best-effort).
+    let mut engine: Option<ClangEngine> = find_compile_db(scope_path)
+        .and_then(|db_dir| ClangEngine::new(&db_dir).ok());
+
+    // Determine engine eligibility based on user preference.
+    match args.engine {
+        EngineChoice::Clang if engine.is_none() => {
+            // User forced clang but it's unavailable — skip graph.
+            return None;
+        }
+        EngineChoice::Heuristic => {
+            // User forced heuristic — drop clang engine.
+            engine = None;
+        }
+        _ => {} // Auto: use whatever is available.
+    }
+
+    // If we have a clang engine, try to find the root symbol's USR.
+    let root_usr: Option<String> = engine.as_mut().and_then(|eng| {
+        eng.try_parse_file(std::path::Path::new(&def.file));
+        eng.find_best_match(base_name)
+            .map(|node| node.usr.clone())
+    });
+
+    // Convert heuristic callers into the tuple format expected by bfs_call_graph.
+    let h_callers: Vec<(String, u32, String)> = callers
+        .iter()
+        .map(|c| {
+            (
+                c.file.clone(),
+                c.line.unwrap_or(0),
+                c.context.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+
+    // Convert heuristic callees.
+    let h_callees: Vec<(String, Option<u32>, String)> = callees
+        .iter()
+        .map(|c| {
+            (
+                c.callee.clone(),
+                c.line,
+                c.call_type.clone().unwrap_or_else(|| "function".to_string()),
+            )
+        })
+        .collect();
+
+    let bfs_config = BfsConfig {
+        max_depth: args.max_depth.min(2), // hard cap at 2
+        max_nodes: args.max_nodes,
+        max_edges: args.max_edges,
+        max_callers_per_hop: args.max_callers,
+        max_callees_per_hop: args.max_callees,
+        prioritize: BfsPriority::CallersFirst,
+    };
+
+    let result = bfs_call_graph(
+        root_usr.as_deref(),
+        base_name,
+        &def.file,
+        def.line,
+        &mut engine,
+        &h_callers,
+        &h_callees,
+        &bfs_config,
+    );
+
+    Some(GraphOutput::from(result))
 }
 
 // ---------------------------------------------------------------------------
