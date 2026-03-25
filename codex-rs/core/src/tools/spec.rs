@@ -1891,6 +1891,99 @@ fn create_grep_files_tool() -> ToolSpec {
     })
 }
 
+fn create_analyze_symbol_source_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "symbol".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Symbol name to analyze (plain or qualified, e.g. `my_func` or \
+                     `MyStruct::my_method`)."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "scopePath".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Directory to search in. Defaults to the session's working directory."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "maxCallers".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Maximum number of callers (references) to return (default 15).".to_string(),
+                ),
+            },
+        ),
+        (
+            "maxCallees".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Maximum number of callees to extract from the definition (default 20)."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "contextLines".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Number of source lines to include around the definition (default 50)."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "includeSource".to_string(),
+            JsonSchema::Boolean {
+                description: Some(
+                    "When true (default), include the definition source snippet in the output."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "includeTests".to_string(),
+            JsonSchema::Boolean {
+                description: Some(
+                    "When true (default), include test-file callers separately in `testCallers`."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "verbose".to_string(),
+            JsonSchema::Boolean {
+                description: Some(
+                    "When true, include timing information in the output.".to_string(),
+                ),
+            },
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "analyze_symbol_source".to_string(),
+        description: "Analyzes a symbol in the local workspace using ripgrep-backed search. \
+                      Returns the definition location, callers (references), and callees extracted \
+                      from the definition source. Operates entirely on local workspace files \
+                      without requiring a network-accessible index."
+            .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["symbol".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+        output_schema: None,
+    })
+}
+
 fn create_tool_search_tool(app_tools: &HashMap<String, ToolInfo>) -> ToolSpec {
     let properties = BTreeMap::from([
         (
@@ -3040,6 +3133,21 @@ pub(crate) fn build_specs_with_discoverable_tools(
             config.code_mode_enabled,
         );
         builder.register_handler("grep_files", grep_files_handler);
+    }
+
+    if config
+        .experimental_supported_tools
+        .contains(&"analyze_symbol_source".to_string())
+    {
+        use crate::tools::handlers::AnalyzeSymbolSourceHandler;
+        let analyze_handler = Arc::new(AnalyzeSymbolSourceHandler);
+        push_tool_spec(
+            &mut builder,
+            create_analyze_symbol_source_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("analyze_symbol_source", analyze_handler);
     }
 
     if config

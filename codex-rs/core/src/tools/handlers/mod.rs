@@ -1,4 +1,5 @@
 pub(crate) mod agent_jobs;
+mod analyze_symbol_source;
 pub mod apply_patch;
 mod artifacts;
 mod dynamic;
@@ -36,6 +37,7 @@ use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
+pub use analyze_symbol_source::AnalyzeSymbolSourceHandler;
 pub use apply_patch::ApplyPatchHandler;
 pub use artifacts::ArtifactsHandler;
 use codex_protocol::models::PermissionProfile;
