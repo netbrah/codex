@@ -1444,7 +1444,7 @@ impl ModelClientSession {
         service_tier: Option<ServiceTier>,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
-        let wire_api = self.client.state.provider.wire_api;
+        let wire_api = self.effective_wire_api(&model_info.slug);
         match wire_api {
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
@@ -1492,6 +1492,36 @@ impl ModelClientSession {
                     turn_metadata_header,
                 )
                 .await
+            }
+        }
+    }
+
+    /// Selects the effective wire API for a given model slug.
+    ///
+    /// When the provider is configured with `wire_api = "messages"` but the
+    /// model is not natively Anthropic (e.g. `gpt-5.3-codex` routed through a
+    /// LiteLLM proxy), the Messages wire is suboptimal: LiteLLM double-
+    /// translates (Messages → Responses → Messages) and its stream adapter
+    /// drops reasoning summary events in transit (LiteLLM 1.82.x).
+    ///
+    /// Rather than papering over the proxy gap, we auto-upgrade to the
+    /// Responses wire for non-Anthropic models. The same provider base URL
+    /// and auth work for both — `/v1/responses` is an adjacent endpoint on
+    /// every OpenAI-compatible proxy.
+    fn effective_wire_api(&self, model_slug: &str) -> WireApi {
+        let configured = self.client.state.provider.wire_api;
+        match configured {
+            WireApi::Responses => WireApi::Responses,
+            WireApi::Messages => {
+                if is_anthropic_model(model_slug) {
+                    WireApi::Messages
+                } else {
+                    tracing::debug!(
+                        model = model_slug,
+                        "auto-upgrading wire API from Messages to Responses for non-Anthropic model"
+                    );
+                    WireApi::Responses
+                }
             }
         }
     }
@@ -1593,6 +1623,7 @@ where
                     }
                 }
                 Ok(ResponseEvent::Completed {
+                    stop_reason,
                     response_id,
                     token_usage,
                 }) => {
@@ -1613,6 +1644,7 @@ where
                     }
                     if tx_event
                         .send(Ok(ResponseEvent::Completed {
+                            stop_reason,
                             response_id,
                             token_usage,
                         }))
@@ -1984,6 +2016,20 @@ impl WebsocketTelemetry for ApiTelemetry {
 /// This is intentionally a safety cap (not primary logic) — the default 64K
 /// is correct for all current Claude models except Opus (128K) and Haiku (8K).
 /// If `ModelInfo` gains a `max_output_tokens` field in the future, prefer that.
+/// Returns `true` when `slug` identifies a model that speaks native Anthropic
+/// `/messages` wire (Claude family). Used by [`effective_wire_api`] to decide
+/// whether to keep the Messages wire or auto-upgrade to Responses.
+///
+/// The check is deliberately conservative: unknown slugs return `false`,
+/// causing an upgrade to the Responses wire which is the safer default
+/// (every LiteLLM / OpenAI-compatible proxy supports `/v1/responses`).
+fn is_anthropic_model(slug: &str) -> bool {
+    let s = slug.to_ascii_lowercase();
+    // All current Anthropic model slugs contain "claude".
+    // Vertex AI slugs follow patterns like "claude-sonnet-4-6@default".
+    s.contains("claude")
+}
+
 fn anthropic_max_output_tokens(slug: &str) -> u32 {
     if slug.contains("opus") {
         128_000
