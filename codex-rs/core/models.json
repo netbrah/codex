@@ -854,7 +854,7 @@
       "supports_image_detail_original": false,
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 50000
       },
       "supports_parallel_tool_calls": true,
       "context_window": 200000,
@@ -879,7 +879,7 @@
         },
         {
           "effort": "high",
-          "description": "Deep thinking (64K budget)"
+          "description": "Deep thinking (63K budget)"
         }
       ],
       "shell_type": "shell_command",
@@ -891,7 +891,6 @@
       "base_instructions": "",
       "model_messages": null,
       "supports_reasoning_summaries": false,
-      "web_search_tool_type": "none",
       "priority": 50,
       "experimental_supported_tools": [],
       "supports_search_tool": false
@@ -907,7 +906,7 @@
       "supports_image_detail_original": false,
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 100000
       },
       "supports_parallel_tool_calls": true,
       "context_window": 1000000,
@@ -915,8 +914,8 @@
       "default_reasoning_summary": "none",
       "slug": "claude-opus-4.6",
       "display_name": "Claude Opus 4.6",
-      "description": "Most capable Claude model. Deep reasoning via /messages wire.",
-      "default_reasoning_level": "medium",
+      "description": "Most capable Claude model. 1M context, 128K output, deep reasoning.",
+      "default_reasoning_level": "high",
       "supported_reasoning_levels": [
         {
           "effort": "none",
@@ -936,7 +935,7 @@
         },
         {
           "effort": "xhigh",
-          "description": "Maximum thinking (128K budget)"
+          "description": "Maximum thinking (127K budget)"
         }
       ],
       "shell_type": "shell_command",
@@ -948,7 +947,6 @@
       "base_instructions": "",
       "model_messages": null,
       "supports_reasoning_summaries": false,
-      "web_search_tool_type": "none",
       "priority": 45,
       "experimental_supported_tools": [],
       "supports_search_tool": false

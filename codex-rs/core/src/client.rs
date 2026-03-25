@@ -1163,8 +1163,8 @@ impl ModelClientSession {
                 // Anthropic requires max_tokens > budget_tokens because
                 // the thinking budget is allocated FROM max_tokens. The
                 // remaining tokens are available for output text.
-                // Cap both to model limits (Vertex enforces per-model caps).
-                let budget = budget.min(model_output_cap - 1024);
+                // Reserve 4096 tokens of headroom for the actual response.
+                let budget = budget.min(model_output_cap.saturating_sub(4096));
                 max_tokens = model_output_cap;
                 Some(serde_json::json!({
                     "type": "enabled",

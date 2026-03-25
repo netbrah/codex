@@ -103,8 +103,6 @@ async fn run_compact_task_inner(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
-    #[allow(unused_variables)]
-    let pre_compact_items: Vec<ResponseItem> = history.raw_items().to_vec();
     history.record_items(
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
