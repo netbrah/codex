@@ -33,6 +33,9 @@ pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 
+/// Fraction of history (by serialized size) to preserve verbatim after compaction.
+const PRESERVE_FRACTION: f64 = 0.3;
+
 /// Controls whether compaction replacement history must include initial context.
 ///
 /// Pre-turn/manual compaction variants use `DoNotInject`: they replace history with a summary and
@@ -100,6 +103,8 @@ async fn run_compact_task_inner(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
+    #[allow(unused_variables)]
+    let pre_compact_items: Vec<ResponseItem> = history.raw_items().to_vec();
     history.record_items(
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
@@ -230,6 +235,52 @@ async fn run_compact_task_inner(
     });
     sess.send_event(&turn_context, warning).await;
     Ok(())
+}
+
+/// Returns the index at which to split history for compaction.
+///
+/// Items before the index are summarized; items at/after are preserved verbatim.
+/// The split targets ~70% summarized / ~30% preserved (by serialized character
+/// count), and always lands on a user message boundary to avoid splitting
+/// tool_call/tool_result pairs.
+pub(crate) fn find_compact_split_point(items: &[ResponseItem]) -> usize {
+    if items.is_empty() {
+        return 0;
+    }
+
+    let char_counts: Vec<usize> = items
+        .iter()
+        .map(|item| serde_json::to_string(item).map(|s| s.len()).unwrap_or(0))
+        .collect();
+    let total: usize = char_counts.iter().sum();
+    let target = (total as f64 * (1.0 - PRESERVE_FRACTION)) as usize;
+
+    let mut accumulated = 0;
+    for (i, count) in char_counts.iter().enumerate() {
+        accumulated += count;
+        if accumulated >= target {
+            return find_next_user_message_boundary(items, i);
+        }
+    }
+    items.len()
+}
+
+fn find_next_user_message_boundary(items: &[ResponseItem], from: usize) -> usize {
+    for i in from..items.len() {
+        if let ResponseItem::Message { role, content, .. } = &items[i] {
+            if role == "user" && !content.is_empty() {
+                let text = content_items_to_text(content).unwrap_or_default();
+                if !is_summary_message(&text) && !is_tool_response_content(&text) {
+                    return i;
+                }
+            }
+        }
+    }
+    items.len()
+}
+
+fn is_tool_response_content(text: &str) -> bool {
+    text.starts_with("{\"type\":\"tool_result\"") || text.starts_with("<tool_result")
 }
 
 pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {

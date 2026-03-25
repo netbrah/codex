@@ -5,7 +5,7 @@ expression: "format_labeled_requests_snapshot(\"Manual /compact with no prior us
 Scenario: Manual /compact with no prior user turn currently still issues a compaction request; follow-up turn carries canonical context and the new user message.
 
 ## Local Compaction Request
-00:message/user:<SUMMARIZATION_PROMPT>
+00:message/user:You are the component that summarizes internal chat history into...
 
 ## Local Post-Compaction History Layout
 00:message/user:<COMPACTION_SUMMARY>\nMANUAL_EMPTY_SUMMARY

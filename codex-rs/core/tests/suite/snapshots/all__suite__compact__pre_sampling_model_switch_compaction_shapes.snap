@@ -14,7 +14,7 @@ Scenario: Pre-sampling compaction on model switch to a smaller context window: c
 01:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
 02:message/user:before switch
 03:message/assistant:before switch
-04:message/user:<SUMMARIZATION_PROMPT>
+04:message/user:You are the component that summarizes internal chat history into...
 
 ## Post-Compaction Follow-up Request (Next Model)
 00:message/user:before switch
