@@ -17,6 +17,9 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::{CallGraph, CompileDbLoader, TuParser};
+
 pub struct AnalyzeSymbolSourceHandler;
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -102,6 +105,13 @@ struct AnalysisOutput {
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     timing: Option<TimingInfo>,
+    /// When true, the results were validated/enhanced by libclang AST analysis.
+    #[serde(rename = "clangEnhanced", skip_serializing_if = "is_false")]
+    clang_enhanced: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
 }
 
 #[derive(Serialize)]
@@ -158,6 +168,7 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
                         scope_path.display()
                     )),
                     timing: None,
+                    clang_enhanced: false,
                 };
                 let json = serde_json::to_string_pretty(&output)
                     .unwrap_or_else(|_| "{\"success\":false}".to_string());
@@ -237,11 +248,33 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
         let references_ms = ref_start.elapsed().as_millis() as u64;
 
         // Phase 3: callee extraction from the definition snippet.
-        let callees = definition
+        let mut callees = definition
             .as_ref()
             .and_then(|d| d.source.as_deref())
             .map(|src| extract_callees(src, args.max_callees, &base_name))
             .unwrap_or_default();
+
+        // Phase 4 (optional): libclang-based validation when the
+        // `clang-graph` feature is enabled and compile_commands.json
+        // is discoverable near the scope path.
+        let clang_enhanced = {
+            #[cfg(feature = "clang-graph")]
+            {
+                try_clang_enhance(
+                    &scope_path,
+                    &base_name,
+                    &definition,
+                    &mut callers,
+                    &mut callees,
+                    args.max_callers,
+                    args.max_callees,
+                )
+            }
+            #[cfg(not(feature = "clang-graph"))]
+            {
+                false
+            }
+        };
 
         let total_ms = total_start.elapsed().as_millis() as u64;
 
@@ -270,6 +303,7 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
             callees,
             error: None,
             timing,
+            clang_enhanced,
         };
 
         let json = serde_json::to_string_pretty(&output).map_err(|e| {
@@ -595,6 +629,143 @@ fn read_source_snippet_sync(file: &str, line_number: u32, context_lines: usize) 
     let start = zero_idx.saturating_sub(2);
     let end = (zero_idx + context_lines).min(lines.len());
     Some(lines[start..end].join("\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Optional libclang-based enhancement (gated behind `clang-graph` feature)
+// ---------------------------------------------------------------------------
+
+/// Walk up from `start` looking for a directory containing
+/// `compile_commands.json`. Returns the directory path if found.
+#[cfg(feature = "clang-graph")]
+fn find_compile_db(start: &Path) -> Option<std::path::PathBuf> {
+    let mut dir = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if dir.join("compile_commands.json").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Attempt to validate/enhance ripgrep-based results using libclang AST
+/// analysis. Returns `true` if enhancement was applied.
+///
+/// This is a best-effort enrichment: if libclang fails (missing
+/// compile_commands.json, parse errors, etc.) we silently fall back to the
+/// existing ripgrep results.
+#[cfg(feature = "clang-graph")]
+fn try_clang_enhance(
+    scope_path: &Path,
+    base_name: &str,
+    definition: &Option<DefinitionResult>,
+    callers: &mut Vec<CallerResult>,
+    callees: &mut Vec<CalleeResult>,
+    max_callers: usize,
+    max_callees: usize,
+) -> bool {
+    // 1. Locate compile_commands.json.
+    let db_dir = match find_compile_db(scope_path) {
+        Some(d) => d,
+        None => return false,
+    };
+
+    // 2. Initialize the loader.
+    let loader = match CompileDbLoader::new(&db_dir) {
+        Ok(l) => l,
+        Err(_) => return false,
+    };
+
+    // 3. If we have a definition file, parse that TU for authoritative callees.
+    let def_file = match definition.as_ref() {
+        Some(d) => std::path::PathBuf::from(&d.file),
+        None => return false,
+    };
+
+    let args = match loader.get_compile_args(&def_file) {
+        Some(a) => a,
+        None => return false,
+    };
+
+    let (edges, functions) = match TuParser::extract_edges_and_functions(loader.clang(), &args) {
+        Ok(result) => result,
+        Err(_) => return false,
+    };
+
+    // 4. Build a local graph from the definition TU.
+    let mut graph = CallGraph::new();
+    graph.ingest_edges(&edges);
+    graph.ingest_functions(&functions);
+
+    // 5. Find the function node matching our symbol.
+    let matches = graph.find_by_name(base_name);
+    if matches.is_empty() {
+        return false;
+    }
+
+    // Prefer a definition over a declaration.
+    let target = matches
+        .iter()
+        .find(|n| n.is_definition)
+        .or(matches.first())
+        .unwrap();
+    let target_usr = target.usr.clone();
+
+    // 6. Enhance callees: replace ripgrep-extracted callees with
+    //    AST-verified direct callees.
+    let clang_callees = graph.direct_callees(&target_usr);
+    if !clang_callees.is_empty() {
+        let mut verified: Vec<CalleeResult> = clang_callees
+            .iter()
+            .take(max_callees)
+            .map(|node| CalleeResult {
+                callee: node.display_name.clone(),
+                line: if node.line > 0 { Some(node.line) } else { None },
+                call_type: Some("ast".to_string()),
+            })
+            .collect();
+        // Merge: keep AST-verified first, then unique ripgrep callees
+        // that the AST didn't see (e.g. macro-expanded calls).
+        let seen: HashSet<String> = verified.iter().map(|c| c.callee.clone()).collect();
+        for rg_callee in callees.iter() {
+            if !seen.contains(&rg_callee.callee) && verified.len() < max_callees {
+                verified.push(CalleeResult {
+                    callee: rg_callee.callee.clone(),
+                    line: rg_callee.line,
+                    call_type: rg_callee.call_type.clone(),
+                });
+            }
+        }
+        *callees = verified;
+    }
+
+    // 7. Enhance callers: add AST-verified callers, mark them.
+    let clang_callers = graph.direct_callers(&target_usr);
+    if !clang_callers.is_empty() {
+        let existing: HashSet<String> = callers
+            .iter()
+            .filter_map(|c| c.line.map(|l| format!("{}:{}", c.file, l)))
+            .collect();
+
+        for node in clang_callers.iter().take(max_callers) {
+            let key = format!("{}:{}", node.file, node.line);
+            if !existing.contains(&key) && callers.len() < max_callers {
+                callers.push(CallerResult {
+                    file: node.file.clone(),
+                    line: if node.line > 0 { Some(node.line) } else { None },
+                    context: Some(format!("[clang] {}", node.display_name)),
+                });
+            }
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]

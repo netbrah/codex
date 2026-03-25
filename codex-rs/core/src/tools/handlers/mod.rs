@@ -1,5 +1,7 @@
 pub(crate) mod agent_jobs;
 mod analyze_symbol_source;
+#[cfg(feature = "clang-graph")]
+pub mod clang_graph;
 pub mod apply_patch;
 mod artifacts;
 mod dir_stats;
