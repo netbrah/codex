@@ -693,3 +693,61 @@ fn find_compact_split_point_skips_summary_messages() {
         );
     }
 }
+
+#[test]
+fn find_compact_split_point_returns_len_when_no_user_boundary_in_tail() {
+    let items = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "a".repeat(200),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "b".repeat(500),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "shell".to_string(),
+            namespace: None,
+            arguments: r#"{"cmd":"ls"}"#.to_string(),
+            call_id: "t1".to_string(),
+        },
+    ];
+
+    let split = find_compact_split_point(&items);
+    assert_eq!(
+        split,
+        items.len(),
+        "when no user message in the 30% tail, split returns items.len() (empty preserved portion)"
+    );
+}
+
+#[test]
+fn split_not_applied_below_min_items_threshold() {
+    let items: Vec<ResponseItem> = (0..5)
+        .map(|i| ResponseItem::Message {
+            id: None,
+            role: if i % 2 == 0 { "user" } else { "assistant" }.to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("msg {i}"),
+            }],
+            end_turn: None,
+            phase: None,
+        })
+        .collect();
+
+    assert!(
+        items.len() < super::MIN_ITEMS_FOR_SPLIT,
+        "test items should be below threshold"
+    );
+}

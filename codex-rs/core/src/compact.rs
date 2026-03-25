@@ -36,6 +36,10 @@ const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 /// Fraction of history (by serialized size) to preserve verbatim after compaction.
 const PRESERVE_FRACTION: f64 = 0.3;
 
+/// Minimum number of pre-compact items required to activate the 70/30 split.
+/// Below this threshold, the classic user-messages + summary assembly is used.
+const MIN_ITEMS_FOR_SPLIT: usize = 20;
+
 /// Controls whether compaction replacement history must include initial context.
 ///
 /// Pre-turn/manual compaction variants use `DoNotInject`: they replace history with a summary and
@@ -103,6 +107,7 @@ async fn run_compact_task_inner(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
+    let pre_compact_items: Vec<ResponseItem> = history.raw_items().to_vec();
     history.record_items(
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
@@ -196,9 +201,41 @@ async fn run_compact_task_inner(
     let history_items = history_snapshot.raw_items();
     let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_user_messages(history_items);
 
-    let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
+    let use_split = pre_compact_items.len() >= MIN_ITEMS_FOR_SPLIT;
+    let preserved_items: Vec<ResponseItem> = if use_split {
+        let split_point = find_compact_split_point(&pre_compact_items);
+        pre_compact_items.get(split_point..).unwrap_or(&[]).to_vec()
+    } else {
+        Vec::new()
+    };
+
+    let mut new_history = if !preserved_items.is_empty() {
+        let mut h = Vec::new();
+        h.push(ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: summary_text.clone(),
+            }],
+            end_turn: None,
+            phase: None,
+        });
+        h.push(ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "Understood. Continuing from where we left off.".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        });
+        h.extend(preserved_items);
+        h
+    } else {
+        let user_messages = collect_user_messages(history_items);
+        build_compacted_history(Vec::new(), &user_messages, &summary_text)
+    };
 
     if matches!(
         initial_context_injection,
