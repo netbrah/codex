@@ -1,0 +1,322 @@
+//! End-to-end integration tests for the Anthropic `/messages` wire protocol.
+//!
+//! Uses a fixture HTTP transport to feed canned SSE bytes through the full
+//! `MessagesClient` → SSE parser → `ResponseEvent` pipeline without network.
+
+use std::time::Duration;
+
+use anyhow::Result;
+use async_trait::async_trait;
+use bytes::Bytes;
+use codex_api::AuthProvider;
+use codex_api::MessagesApiRequest;
+use codex_api::MessagesClient;
+use codex_api::Provider;
+use codex_api::ResponseEvent;
+use codex_client::HttpTransport;
+use codex_client::Request;
+use codex_client::Response;
+use codex_client::StreamResponse;
+use codex_client::TransportError;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseItem;
+use http::HeaderMap;
+use http::StatusCode;
+use pretty_assertions::assert_eq;
+use serde_json::json;
+
+#[derive(Clone)]
+struct FixtureSseTransport {
+    body: String,
+}
+
+impl FixtureSseTransport {
+    fn new(body: String) -> Self {
+        Self { body }
+    }
+}
+
+#[async_trait]
+impl HttpTransport for FixtureSseTransport {
+    async fn execute(&self, _req: Request) -> Result<Response, TransportError> {
+        Err(TransportError::Build("execute should not run".to_string()))
+    }
+
+    async fn stream(&self, _req: Request) -> Result<StreamResponse, TransportError> {
+        let stream = futures::stream::iter(vec![Ok::<Bytes, TransportError>(Bytes::from(
+            self.body.clone(),
+        ))]);
+        Ok(StreamResponse {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            bytes: Box::pin(stream),
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct NoAuth;
+
+impl AuthProvider for NoAuth {
+    fn bearer_token(&self) -> Option<String> {
+        None
+    }
+}
+
+fn provider() -> Provider {
+    Provider {
+        name: "test-anthropic".to_string(),
+        base_url: "https://example.com/v1".to_string(),
+        query_params: None,
+        headers: HeaderMap::new(),
+        retry: codex_api::provider::RetryConfig {
+            max_attempts: 1,
+            base_delay: Duration::from_millis(1),
+            retry_429: false,
+            retry_5xx: false,
+            retry_transport: true,
+        },
+        stream_idle_timeout: Duration::from_millis(500),
+    }
+}
+
+fn build_messages_sse(lines: &[&str]) -> String {
+    let mut body = String::new();
+    for line in lines {
+        body.push_str(line);
+        body.push('\n');
+    }
+    body
+}
+
+fn simple_request() -> MessagesApiRequest {
+    MessagesApiRequest {
+        model: "claude-sonnet-4.6".to_string(),
+        messages: vec![json!({"role": "user", "content": [{"type": "text", "text": "hello"}]})],
+        max_tokens: 1024,
+        stream: true,
+        system: None,
+        tools: None,
+        tool_choice: None,
+        thinking: None,
+    }
+}
+
+async fn collect_events(transport: FixtureSseTransport) -> Vec<Result<ResponseEvent, String>> {
+    let client = MessagesClient::new(transport, provider(), NoAuth);
+    let stream = client
+        .stream_request(simple_request(), HeaderMap::new())
+        .await
+        .expect("stream_request should succeed");
+
+    let mut rx = stream.rx_event;
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event.map_err(|e| format!("{e:?}")));
+    }
+    events
+}
+
+#[tokio::test]
+async fn messages_text_streaming_end_to_end() -> Result<()> {
+    let body = build_messages_sse(&[
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_e2e_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":15,\"output_tokens\":0}}}",
+        "",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"4\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}",
+        "",
+        "data: {\"type\":\"message_stop\"}",
+        "",
+    ]);
+
+    let events = collect_events(FixtureSseTransport::new(body)).await;
+    let ok_events: Vec<_> = events.iter().filter_map(|e| e.as_ref().ok()).collect();
+
+    assert!(
+        ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::Created)),
+        "must emit Created"
+    );
+    assert!(
+        ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::OutputTextDelta(t) if t == "4")),
+        "must emit text delta"
+    );
+
+    let mut found_message = false;
+    let mut found_completed = false;
+    for event in &ok_events {
+        match event {
+            ResponseEvent::OutputItemDone(ResponseItem::Message { content, .. }) => {
+                if let Some(ContentItem::OutputText { text }) = content.first() {
+                    assert_eq!(text, "4");
+                    found_message = true;
+                }
+            }
+            ResponseEvent::Completed {
+                response_id,
+                token_usage,
+            } => {
+                assert_eq!(response_id, "msg_e2e_1");
+                let usage = token_usage.as_ref().expect("usage present");
+                assert_eq!(usage.input_tokens, 15);
+                assert_eq!(usage.output_tokens, 1);
+                found_completed = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(found_message, "must emit OutputItemDone(Message)");
+    assert!(found_completed, "must emit Completed with usage");
+    Ok(())
+}
+
+#[tokio::test]
+async fn messages_tool_use_end_to_end() -> Result<()> {
+    let body = build_messages_sse(&[
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_e2e_2\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":50,\"output_tokens\":0}}}",
+        "",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Let me read that file.\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "",
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_e2e_01\",\"name\":\"read_file\",\"input\":{}}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\"\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\": \\\"src/main.rs\\\"}\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":1}",
+        "",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":30}}",
+        "",
+        "data: {\"type\":\"message_stop\"}",
+        "",
+    ]);
+
+    let events = collect_events(FixtureSseTransport::new(body)).await;
+    let ok_events: Vec<_> = events.iter().filter_map(|e| e.as_ref().ok()).collect();
+
+    let mut found_text = false;
+    let mut found_tool = false;
+    let mut found_completed = false;
+    for event in &ok_events {
+        match event {
+            ResponseEvent::OutputItemDone(ResponseItem::Message { content, .. }) => {
+                if let Some(ContentItem::OutputText { text }) = content.first() {
+                    assert_eq!(text, "Let me read that file.");
+                    found_text = true;
+                }
+            }
+            ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+                ..
+            }) => {
+                assert_eq!(call_id, "toolu_e2e_01");
+                assert_eq!(name, "read_file");
+                assert_eq!(arguments, "{\"path\": \"src/main.rs\"}");
+                found_tool = true;
+            }
+            ResponseEvent::Completed { response_id, .. } => {
+                assert_eq!(response_id, "msg_e2e_2");
+                found_completed = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(found_text, "must emit text OutputItemDone");
+    assert!(found_tool, "must emit FunctionCall OutputItemDone");
+    assert!(found_completed, "must emit Completed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn messages_thinking_with_signature_end_to_end() -> Result<()> {
+    let body = build_messages_sse(&[
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_e2e_3\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}",
+        "",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me reason about this carefully.\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"ErUmSignatureABC123==\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "",
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"The answer is 42.\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":1}",
+        "",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":20}}",
+        "",
+        "data: {\"type\":\"message_stop\"}",
+        "",
+    ]);
+
+    let events = collect_events(FixtureSseTransport::new(body)).await;
+    let ok_events: Vec<_> = events.iter().filter_map(|e| e.as_ref().ok()).collect();
+
+    let mut found_thinking_delta = false;
+    let mut found_reasoning = false;
+    let mut found_text = false;
+    for event in &ok_events {
+        match event {
+            ResponseEvent::ReasoningContentDelta { delta, .. }
+                if delta.contains("reason about this") =>
+            {
+                found_thinking_delta = true;
+            }
+            ResponseEvent::OutputItemDone(ResponseItem::Reasoning {
+                encrypted_content, ..
+            }) => {
+                assert_eq!(
+                    encrypted_content.as_deref(),
+                    Some("ErUmSignatureABC123=="),
+                    "signature must be preserved in encrypted_content"
+                );
+                found_reasoning = true;
+            }
+            ResponseEvent::OutputItemDone(ResponseItem::Message { content, .. }) => {
+                if let Some(ContentItem::OutputText { text }) = content.first() {
+                    assert_eq!(text, "The answer is 42.");
+                    found_text = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(found_thinking_delta, "must stream thinking deltas");
+    assert!(found_reasoning, "must emit Reasoning with signature");
+    assert!(found_text, "must emit text after thinking");
+    Ok(())
+}
+
+#[tokio::test]
+async fn messages_error_event_end_to_end() -> Result<()> {
+    let body = build_messages_sse(&[
+        "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}",
+        "",
+    ]);
+
+    let events = collect_events(FixtureSseTransport::new(body)).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Err(msg) if msg.contains("ServerOverloaded"))),
+        "must propagate ServerOverloaded error"
+    );
+    Ok(())
+}
