@@ -19,6 +19,7 @@ mod plan;
 mod read_file;
 mod request_permissions;
 mod request_user_input;
+mod search_rg;
 mod shell;
 mod test_sync;
 mod tool_search;

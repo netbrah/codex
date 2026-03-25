@@ -1,13 +1,11 @@
 use std::collections::HashSet;
 use std::path::Path;
-use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::process::Command;
-use tokio::time::timeout;
+use tempfile::NamedTempFile;
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
@@ -20,12 +18,16 @@ use crate::tools::registry::ToolKind;
 #[cfg(feature = "clang-graph")]
 use super::clang_graph::{CallGraph, CompileDbLoader, TuParser};
 
+use super::dir_stats::estimate_scope_file_count;
+use super::dir_stats::load_dir_stats;
+use super::search_rg::make_scope_tempfile;
+use super::search_rg::run_rg_lines_direct;
+use super::search_rg::run_rg_lines_from_manifest;
+use super::workspace_index::ensure_index;
+use super::workspace_index::IndexStatus;
+use super::workspace_index::WorkspaceIndexConfig;
+
 pub struct AnalyzeSymbolSourceHandler;
-
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Maximum number of files in the scope before refusing to search.
-const MAX_FILE_SCOPE: usize = 50_000;
 
 fn default_max_callers() -> usize {
     15
@@ -151,29 +153,21 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
         }
 
         let scope_path = turn.resolve_path(args.scope_path.clone());
+        let workspace_root = turn.cwd.clone();
+        let config = WorkspaceIndexConfig::from_env();
 
-        // File-count governor: avoid runaway scans on huge workspaces.
-        if let Ok(count) = count_files_in_scope(&scope_path).await
-            && count > MAX_FILE_SCOPE {
-                let output = AnalysisOutput {
-                    success: false,
-                    symbol: symbol.clone(),
-                    definition: None,
-                    callers: vec![],
-                    test_callers: None,
-                    callees: vec![],
-                    error: Some(format!(
-                        "Scope too broad: {count} files found under `{}`. \
-                         Provide a narrower `scopePath` (e.g. a sub-directory) to limit the search.",
-                        scope_path.display()
-                    )),
-                    timing: None,
-                    clang_enhanced: false,
-                };
-                let json = serde_json::to_string_pretty(&output)
-                    .unwrap_or_else(|_| "{\"success\":false}".to_string());
-                return Ok(FunctionToolOutput::from_text(json, Some(false)));
-            }
+        // Determine the search strategy based on the workspace index state.
+        // When the manifest is available use it to avoid directory traversal / stat
+        // storms on NFS.  Otherwise fall back to direct `rg` invocations.
+        let search_strategy =
+            resolve_search_strategy(&scope_path, &workspace_root, &config).await?;
+
+        if let SearchStrategy::TooManyFiles { count } = search_strategy {
+            return Ok(make_too_broad_output(&symbol, &scope_path, count));
+        }
+        if let SearchStrategy::IndexBuilding = search_strategy {
+            return Ok(make_building_output(&symbol));
+        }
 
         let total_start = Instant::now();
 
@@ -182,7 +176,16 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
         let base_name = base_symbol_name(&symbol).to_string();
         let def_pattern = build_definition_pattern(&base_name);
         let definition_ms;
-        let definition = match run_rg_search_lines(&def_pattern, &scope_path, 20).await {
+        let definition = match search_lines(
+            &def_pattern,
+            &search_strategy,
+            &scope_path,
+            /*max_results=*/ 20,
+            /*max_count_per_file=*/ Some(1),
+            &workspace_root,
+        )
+        .await
+        {
             Ok(hits) => {
                 definition_ms = def_start.elapsed().as_millis() as u64;
                 hits.into_iter().next().map(|(file, line, content)| {
@@ -217,8 +220,15 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
 
         if args.max_callers > 0 {
             let ref_pattern = format!(r"\b{}\b", regex_escape(&base_name));
-            if let Ok(hits) =
-                run_rg_search_lines_all(&ref_pattern, &scope_path, args.max_callers * 10).await
+            if let Ok(hits) = search_lines(
+                &ref_pattern,
+                &search_strategy,
+                &scope_path,
+                args.max_callers * 10,
+                /*max_count_per_file=*/ None,
+                &workspace_root,
+            )
+            .await
             {
                 let def_key = definition.as_ref().map(|d| (d.file.clone(), d.line));
                 let mut seen: HashSet<(String, u32)> = HashSet::new();
@@ -312,6 +322,128 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
 
         Ok(FunctionToolOutput::from_text(json, Some(true)))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Search strategy
+// ---------------------------------------------------------------------------
+
+/// Describes how searches will be executed for this invocation.
+///
+/// Resolved once per `handle()` call and then shared between the definition
+/// and caller searches to avoid redundant index checks.
+enum SearchStrategy {
+    /// Use the pre-filtered manifest temp file (NFS-safe, fast).
+    Manifest(NamedTempFile),
+    /// Fall back to a direct directory scan (index not yet ready).
+    Direct,
+    /// The index is currently being built and the scope is the whole workspace.
+    /// The caller should return a "please retry" message.
+    IndexBuilding,
+    /// The scope contains more files than the configured limit.
+    TooManyFiles { count: usize },
+}
+
+/// Resolves the [`SearchStrategy`] to use for the given scope.
+async fn resolve_search_strategy(
+    scope_path: &Path,
+    workspace_root: &Path,
+    config: &WorkspaceIndexConfig,
+) -> Result<SearchStrategy, FunctionCallError> {
+    match ensure_index(workspace_root, config) {
+        IndexStatus::Ready {
+            ref manifest_path,
+            ref dirstats_path,
+        } => {
+            // Scope governor: use the dirstats file (no traversal needed).
+            if let Ok(stats) = load_dir_stats(dirstats_path) {
+                let count = estimate_scope_file_count(&stats, scope_path);
+                if count > config.max_scope_files {
+                    return Ok(SearchStrategy::TooManyFiles { count });
+                }
+            }
+            // Build the scoped temp file; fall back to direct if empty/error.
+            match make_scope_tempfile(manifest_path, scope_path) {
+                Some(tmp) => Ok(SearchStrategy::Manifest(tmp)),
+                None => Ok(SearchStrategy::Direct),
+            }
+        }
+        IndexStatus::Building if scope_path == workspace_root => Ok(SearchStrategy::IndexBuilding),
+        IndexStatus::Building | IndexStatus::Stale | IndexStatus::Unavailable => {
+            // For scoped (sub-directory) searches fall back to direct rg.
+            // Apply a cheap file-count governor to avoid runaway scans.
+            let count = count_files_in_scope(scope_path).await.unwrap_or(0);
+            if count > config.max_scope_files {
+                Ok(SearchStrategy::TooManyFiles { count })
+            } else {
+                Ok(SearchStrategy::Direct)
+            }
+        }
+    }
+}
+
+/// Run a line-based rg search using the resolved [`SearchStrategy`].
+async fn search_lines(
+    pattern: &str,
+    strategy: &SearchStrategy,
+    scope_path: &Path,
+    max_results: usize,
+    max_count_per_file: Option<usize>,
+    cwd: &Path,
+) -> Result<Vec<(String, u32, String)>, String> {
+    match strategy {
+        SearchStrategy::Manifest(tmp) => {
+            run_rg_lines_from_manifest(pattern, tmp.path(), max_results, max_count_per_file, cwd)
+                .await
+        }
+        SearchStrategy::Direct => {
+            run_rg_lines_direct(pattern, scope_path, max_results, max_count_per_file).await
+        }
+        // These two variants are handled before search_lines is called.
+        SearchStrategy::IndexBuilding | SearchStrategy::TooManyFiles { .. } => Ok(vec![]),
+    }
+}
+
+fn make_too_broad_output(symbol: &str, scope_path: &Path, count: usize) -> FunctionToolOutput {
+    let output = AnalysisOutput {
+        success: false,
+        symbol: symbol.to_string(),
+        definition: None,
+        callers: vec![],
+        test_callers: None,
+        callees: vec![],
+        error: Some(format!(
+            "Scope too broad: {count} files found under `{}`. \
+             Provide a narrower `scopePath` (e.g. a sub-directory) to limit the search.",
+            scope_path.display()
+        )),
+        timing: None,
+        clang_enhanced: false,
+    };
+    let json =
+        serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{\"success\":false}".to_string());
+    FunctionToolOutput::from_text(json, Some(false))
+}
+
+fn make_building_output(symbol: &str) -> FunctionToolOutput {
+    let output = AnalysisOutput {
+        success: false,
+        symbol: symbol.to_string(),
+        definition: None,
+        callers: vec![],
+        test_callers: None,
+        callees: vec![],
+        error: Some(
+            "Workspace index is being built in the background. \
+             Please retry in a moment, or provide a narrower `scopePath` to search a sub-directory immediately."
+                .to_string(),
+        ),
+        timing: None,
+        clang_enhanced: false,
+    };
+    let json =
+        serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{\"success\":false}".to_string());
+    FunctionToolOutput::from_text(json, Some(false))
 }
 
 // ---------------------------------------------------------------------------
@@ -499,104 +631,19 @@ fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// Run ripgrep with `--max-count 1` per file (good for definition search).
-async fn run_rg_search_lines(
-    pattern: &str,
-    search_path: &Path,
-    max_results: usize,
-) -> Result<Vec<(String, u32, String)>, String> {
-    let output = timeout(
-        COMMAND_TIMEOUT,
-        Command::new("rg")
-            .arg("--no-heading")
-            .arg("-n")
-            .arg("--max-count")
-            .arg("1")
-            .arg("--regexp")
-            .arg(pattern)
-            .arg("--no-messages")
-            .arg("--")
-            .arg(search_path)
-            .output(),
-    )
-    .await
-    .map_err(|_| "rg timed out after 30 seconds".to_string())?
-    .map_err(|e| format!("failed to launch rg: {e}"))?;
-
-    match output.status.code() {
-        Some(0) => Ok(parse_rg_lines(&output.stdout, max_results)),
-        Some(1) => Ok(vec![]),
-        _ => Err(format!(
-            "rg failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )),
-    }
-}
-
-/// Run ripgrep without per-file result cap (good for reference/caller search).
-async fn run_rg_search_lines_all(
-    pattern: &str,
-    search_path: &Path,
-    max_results: usize,
-) -> Result<Vec<(String, u32, String)>, String> {
-    let output = timeout(
-        COMMAND_TIMEOUT,
-        Command::new("rg")
-            .arg("--no-heading")
-            .arg("-n")
-            .arg("--regexp")
-            .arg(pattern)
-            .arg("--no-messages")
-            .arg("--")
-            .arg(search_path)
-            .output(),
-    )
-    .await
-    .map_err(|_| "rg timed out after 30 seconds".to_string())?
-    .map_err(|e| format!("failed to launch rg: {e}"))?;
-
-    match output.status.code() {
-        Some(0) => Ok(parse_rg_lines(&output.stdout, max_results)),
-        Some(1) => Ok(vec![]),
-        _ => Err(format!(
-            "rg failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )),
-    }
-}
-
-/// Parse `filename:lineno:content` lines from ripgrep output.
-fn parse_rg_lines(stdout: &[u8], max_results: usize) -> Vec<(String, u32, String)> {
-    let mut results = Vec::new();
-    for raw in stdout.split(|&b| b == b'\n') {
-        if raw.is_empty() {
-            continue;
-        }
-        let Ok(line) = std::str::from_utf8(raw) else {
-            continue;
-        };
-        // Format: "path/to/file.rs:42:content here"
-        let mut parts = line.splitn(3, ':');
-        let (Some(file), Some(lineno_str), Some(content)) =
-            (parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        let Ok(lineno) = lineno_str.parse::<u32>() else {
-            continue;
-        };
-        results.push((file.to_string(), lineno, content.to_string()));
-        if results.len() >= max_results {
-            break;
-        }
-    }
-    results
-}
-
 /// Count files under a scope path using `rg --files`.
+///
+/// Used in the fallback path when the workspace index is not yet available,
+/// to apply the `max_scope_files` governor without a manifest.
 async fn count_files_in_scope(scope_path: &Path) -> Result<usize, String> {
+    use std::time::Duration;
+    use tokio::process::Command;
+    use tokio::time::timeout;
+
+    const TIMEOUT: Duration = Duration::from_secs(30);
+
     let output = timeout(
-        COMMAND_TIMEOUT,
+        TIMEOUT,
         Command::new("rg")
             .arg("--files")
             .arg("--no-messages")
