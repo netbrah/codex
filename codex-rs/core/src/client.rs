@@ -101,6 +101,8 @@ use crate::default_client::build_reqwest_client;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
+use crate::messages_wire::conversation_to_anthropic_messages;
+use crate::messages_wire::tools_to_anthropic_format;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::response_debug_context::extract_response_debug_context;
@@ -111,6 +113,8 @@ use crate::tools::spec::create_tools_json_for_responses_api;
 use crate::util::FeedbackRequestTags;
 use crate::util::emit_feedback_auth_recovery_tags;
 use crate::util::emit_feedback_request_tags_with_auth_env;
+use codex_api::MessagesApiRequest;
+use codex_api::MessagesClient as ApiMessagesClient;
 
 pub const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 pub const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
@@ -416,6 +420,10 @@ impl ModelClient {
         session_telemetry: &SessionTelemetry,
     ) -> Result<Vec<ApiMemorySummarizeOutput>> {
         if raw_memories.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if self.state.provider.wire_api != WireApi::Responses {
             return Ok(Vec::new());
         }
 
@@ -1077,6 +1085,138 @@ impl ModelClientSession {
         }
     }
 
+    /// Streams a turn via the Anthropic Messages API (`/v1/messages`).
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(
+        name = "model_client.stream_messages_api",
+        level = "info",
+        skip_all,
+        fields(
+            model = %model_info.slug,
+            wire_api = "messages",
+            transport = "messages_http",
+            http.method = "POST",
+            api.path = "messages",
+        )
+    )]
+    async fn stream_messages_api(
+        &self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        effort: Option<ReasoningEffortConfig>,
+        _summary: ReasoningSummaryConfig,
+        _service_tier: Option<ServiceTier>,
+        turn_metadata_header: Option<&str>,
+    ) -> Result<ResponseStream> {
+        let auth_manager = self.client.state.auth_manager.clone();
+        let mut auth_recovery = auth_manager
+            .as_ref()
+            .map(super::auth::AuthManager::unauthorized_recovery);
+        let mut pending_retry = PendingUnauthorizedRetry::default();
+        loop {
+            let client_setup = self.client.current_client_setup().await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let request_auth_context = AuthRequestTelemetryContext::new(
+                client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+                &client_setup.api_auth,
+                pending_retry,
+            );
+            let (request_telemetry, _sse_telemetry) = Self::build_streaming_telemetry(
+                session_telemetry,
+                request_auth_context,
+                RequestRouteTelemetry::for_endpoint("/messages"),
+                self.client.state.auth_env_telemetry.clone(),
+            );
+            let client = ApiMessagesClient::new(
+                transport,
+                client_setup.api_provider,
+                client_setup.api_auth,
+            )
+            .with_telemetry(Some(request_telemetry));
+
+            let input = prompt.get_formatted_input();
+            let messages = conversation_to_anthropic_messages(&input);
+            let anthropic_tools = tools_to_anthropic_format(&prompt.tools);
+
+            let system = if prompt.base_instructions.text.is_empty() {
+                None
+            } else {
+                Some(serde_json::json!([{
+                    "type": "text",
+                    "text": prompt.base_instructions.text,
+                    "cache_control": {"type": "ephemeral"}
+                }]))
+            };
+
+            let model_output_cap = anthropic_max_output_tokens(&model_info.slug);
+            let mut max_tokens: u32 = model_output_cap.min(16384);
+
+            let thinking = effort.and_then(|e| {
+                let budget: u32 = match e {
+                    ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal => return None,
+                    ReasoningEffortConfig::Low => 4096,
+                    ReasoningEffortConfig::Medium => 16384,
+                    ReasoningEffortConfig::High => 65536,
+                    ReasoningEffortConfig::XHigh => 131072,
+                };
+                // Anthropic requires max_tokens > budget_tokens because
+                // the thinking budget is allocated FROM max_tokens. The
+                // remaining tokens are available for output text.
+                // Cap both to model limits (Vertex enforces per-model caps).
+                let budget = budget.min(model_output_cap - 1024);
+                max_tokens = model_output_cap;
+                Some(serde_json::json!({
+                    "type": "enabled",
+                    "budget_tokens": budget
+                }))
+            });
+
+            let request = MessagesApiRequest {
+                model: model_info.slug.clone(),
+                messages,
+                max_tokens,
+                stream: true,
+                system,
+                tools: if anthropic_tools.is_empty() {
+                    None
+                } else {
+                    Some(anthropic_tools)
+                },
+                tool_choice: None,
+                thinking,
+            };
+
+            let mut extra_headers = ApiHeaderMap::new();
+            if let Some(metadata) = turn_metadata_header {
+                if let Ok(val) = HeaderValue::from_str(metadata) {
+                    extra_headers.insert("x-codex-turn-metadata", val);
+                }
+            }
+
+            match client.stream_request(request, extra_headers).await {
+                Ok(stream) => {
+                    let (stream, _) = map_response_stream(stream, session_telemetry.clone());
+                    return Ok(stream);
+                }
+                Err(ApiError::Transport(
+                    unauthorized_transport @ TransportError::Http { status, .. },
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(
+                        handle_unauthorized(
+                            unauthorized_transport,
+                            &mut auth_recovery,
+                            session_telemetry,
+                        )
+                        .await?,
+                    );
+                    continue;
+                }
+                Err(err) => return Err(map_api_error(err)),
+            }
+        }
+    }
+
     /// Streams a turn via the Responses API over WebSocket transport.
     #[allow(clippy::too_many_arguments)]
     #[instrument(
@@ -1323,6 +1463,18 @@ impl ModelClientSession {
                 }
 
                 self.stream_responses_api(
+                    prompt,
+                    model_info,
+                    session_telemetry,
+                    effort,
+                    summary,
+                    service_tier,
+                    turn_metadata_header,
+                )
+                .await
+            }
+            WireApi::Messages => {
+                self.stream_messages_api(
                     prompt,
                     model_info,
                     session_telemetry,
@@ -1815,6 +1967,22 @@ impl WebsocketTelemetry for ApiTelemetry {
     ) {
         self.session_telemetry
             .record_websocket_event(result, duration);
+    }
+}
+
+/// Per-model output token caps for Anthropic `/messages`.
+///
+/// Falls back to known Anthropic model families via slug substring matching.
+/// This is intentionally a safety cap (not primary logic) — the default 64K
+/// is correct for all current Claude models except Opus (128K) and Haiku (8K).
+/// If `ModelInfo` gains a `max_output_tokens` field in the future, prefer that.
+fn anthropic_max_output_tokens(slug: &str) -> u32 {
+    if slug.contains("opus") {
+        128_000
+    } else if slug.contains("haiku") {
+        8_192
+    } else {
+        64_000
     }
 }
 
