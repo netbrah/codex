@@ -143,8 +143,8 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
         let scope_path = turn.resolve_path(args.scope_path.clone());
 
         // File-count governor: avoid runaway scans on huge workspaces.
-        if let Ok(count) = count_files_in_scope(&scope_path).await {
-            if count > MAX_FILE_SCOPE {
+        if let Ok(count) = count_files_in_scope(&scope_path).await
+            && count > MAX_FILE_SCOPE {
                 let output = AnalysisOutput {
                     success: false,
                     symbol: symbol.clone(),
@@ -163,7 +163,6 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
                     .unwrap_or_else(|_| "{\"success\":false}".to_string());
                 return Ok(FunctionToolOutput::from_text(json, Some(false)));
             }
-        }
 
         let total_start = Instant::now();
 
