@@ -9,9 +9,11 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::Duration;
 
-const PROXY_BASE_URL: &str = "https://llm-proxy-api.ai.eng.netapp.com/v1";
+fn proxy_base_url() -> String {
+    std::env::var("CODEX_PROXY_BASE_URL")
+        .unwrap_or_else(|_| "https://llm-proxy-api.ai.eng.netapp.com/v1".to_string())
+}
 const DEFAULT_MODEL: &str = "claude-sonnet-4.6";
 
 fn skip_unless_proxy_e2e() -> bool {
@@ -91,7 +93,7 @@ trust_level = "trusted"
 "#,
         model = config.model,
         effort = config.reasoning_effort,
-        base_url = PROXY_BASE_URL,
+        base_url = proxy_base_url(),
         workdir = tmp_dir.path().display(),
     );
     std::fs::write(codex_home.join("config.toml"), config_content).expect("write config");

@@ -166,6 +166,7 @@ async fn messages_text_streaming_end_to_end() -> Result<()> {
             ResponseEvent::Completed {
                 response_id,
                 token_usage,
+                ..
             } => {
                 assert_eq!(response_id, "msg_e2e_1");
                 let usage = token_usage.as_ref().expect("usage present");
@@ -321,5 +322,195 @@ async fn messages_error_event_end_to_end() -> Result<()> {
             .any(|e| matches!(e, Err(msg) if msg.contains("ServerOverloaded"))),
         "must propagate ServerOverloaded error"
     );
+    Ok(())
+}
+
+/// Simulates the stream produced by a LiteLLM proxy when routing an OpenAI
+/// model through /v1/messages → Responses API and translating
+/// reasoning_summary_text.delta back into thinking_delta events.
+///
+/// This is the exact scenario fixed by adding `"summary"` to the thinking
+/// JSON in client.rs: once the proxy receives the summary hint, it passes
+/// `reasoning: {summary: "detailed"}` to the Responses API, which then emits
+/// `reasoning_summary_text.delta` events that the proxy translates to
+/// `thinking_delta` events.
+#[tokio::test]
+async fn messages_proxy_translated_reasoning_deltas_end_to_end() -> Result<()> {
+    // This fixture mimics what LiteLLM's AnthropicResponsesStreamWrapper
+    // produces when Responses API reasoning summary deltas are available.
+    let body = build_messages_sse(&[
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_proxy_reason\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"gpt-5.3-codex\",\"usage\":{\"input_tokens\":20,\"output_tokens\":0}}}",
+        "",
+        // Reasoning block start (translated from response.output_item.added type=reasoning)
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}",
+        "",
+        // Reasoning summary deltas (translated from response.reasoning_summary_text.delta)
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"**Calculating\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" the product**\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"\\nMultiplying 27 by 453 step by step.\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "",
+        // Text response
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"12,231\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":1}",
+        "",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":15}}",
+        "",
+        "data: {\"type\":\"message_stop\"}",
+        "",
+    ]);
+
+    let events = collect_events(FixtureSseTransport::new(body)).await;
+    let ok_events: Vec<_> = events.iter().filter_map(|e| e.as_ref().ok()).collect();
+
+    // Verify model name reflects the proxied OpenAI model
+    assert!(
+        ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::ServerModel(m) if m == "gpt-5.3-codex")),
+        "must emit ServerModel(gpt-5.3-codex)"
+    );
+
+    // Verify OutputItemAdded(Reasoning) precedes thinking deltas
+    let reasoning_added_idx = ok_events
+        .iter()
+        .position(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })));
+    assert!(
+        reasoning_added_idx.is_some(),
+        "must emit OutputItemAdded(Reasoning) for thinking block start"
+    );
+
+    // Verify we get streaming thinking deltas (3 of them)
+    let thinking_deltas: Vec<_> = ok_events
+        .iter()
+        .filter(|e| matches!(e, ResponseEvent::ReasoningContentDelta { .. }))
+        .collect();
+    assert_eq!(
+        thinking_deltas.len(),
+        3,
+        "must emit 3 thinking deltas from proxy-translated stream"
+    );
+
+    // Verify the first delta contains the bold header for TUI shimmer
+    if let ResponseEvent::ReasoningContentDelta { delta, .. } = thinking_deltas[0] {
+        assert!(
+            delta.contains("**Calculating"),
+            "first delta should contain bold header pattern for TUI: {delta}"
+        );
+    }
+
+    // Verify the accumulated reasoning text in OutputItemDone
+    let mut found_reasoning_done = false;
+    for event in &ok_events {
+        if let ResponseEvent::OutputItemDone(ResponseItem::Reasoning { summary, .. }) = event {
+            let combined: String = summary
+                .iter()
+                .map(|s| match s {
+                    codex_protocol::models::ReasoningItemReasoningSummary::SummaryText {
+                        text,
+                    } => text.as_str(),
+                })
+                .collect();
+            assert!(
+                combined.contains("Calculating"),
+                "reasoning summary must contain accumulated thinking text"
+            );
+            assert!(
+                combined.contains("step by step"),
+                "reasoning summary must contain all deltas"
+            );
+            found_reasoning_done = true;
+        }
+    }
+    assert!(
+        found_reasoning_done,
+        "must emit OutputItemDone(Reasoning) with accumulated text"
+    );
+
+    // Verify text response follows
+    let mut found_text = false;
+    for event in &ok_events {
+        if let ResponseEvent::OutputItemDone(ResponseItem::Message { content, .. }) = event {
+            if let Some(ContentItem::OutputText { text }) = content.first() {
+                assert_eq!(text, "12,231");
+                found_text = true;
+            }
+        }
+    }
+    assert!(found_text, "must emit text OutputItemDone after reasoning");
+
+    // Verify Completed
+    assert!(
+        ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::Completed { response_id, .. } if response_id == "msg_proxy_reason")),
+        "must emit Completed"
+    );
+
+    Ok(())
+}
+
+/// Validates that when no thinking is configured (effort=None/Minimal), the
+/// stream works without any reasoning blocks — regression guard.
+#[tokio::test]
+async fn messages_no_thinking_no_reasoning_events() -> Result<()> {
+    let body = build_messages_sse(&[
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_no_think\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}",
+        "",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+        "",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello!\"}}",
+        "",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}",
+        "",
+        "data: {\"type\":\"message_stop\"}",
+        "",
+    ]);
+
+    let events = collect_events(FixtureSseTransport::new(body)).await;
+    let ok_events: Vec<_> = events.iter().filter_map(|e| e.as_ref().ok()).collect();
+
+    // No reasoning events at all
+    assert!(
+        !ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::ReasoningContentDelta { .. })),
+        "must NOT emit any reasoning deltas when no thinking block present"
+    );
+    assert!(
+        !ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. }))),
+        "must NOT emit OutputItemAdded(Reasoning) when no thinking block present"
+    );
+    assert!(
+        !ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. }))),
+        "must NOT emit OutputItemDone(Reasoning) when no thinking block present"
+    );
+
+    // Text works fine
+    assert!(
+        ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::OutputTextDelta(t) if t == "Hello!")),
+        "text deltas must still work"
+    );
+    assert!(
+        ok_events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::Completed { .. })),
+        "must complete"
+    );
+
     Ok(())
 }
