@@ -99,6 +99,9 @@ fn simple_request() -> MessagesApiRequest {
         tools: None,
         tool_choice: None,
         thinking: None,
+        temperature: None,
+        top_p: None,
+        top_k: None,
     }
 }
 

@@ -94,6 +94,7 @@ async fn process_messages_sse(
     let mut tracker = BlockTracker::new();
     let mut response_id = String::new();
     let mut usage_holder: Option<AnthropicUsage> = None;
+    let mut _stop_reason: Option<String> = None;
 
     loop {
         let response = timeout(idle_timeout, sse_stream.next()).await;
@@ -149,6 +150,15 @@ async fn process_messages_sse(
                     if let Some(u) = msg.get("usage") {
                         if let Ok(u) = serde_json::from_value::<AnthropicUsage>(u.clone()) {
                             usage_holder = Some(u);
+                        }
+                    }
+                    if let Some(model) = msg.get("model").and_then(|v| v.as_str()) {
+                        if tx_event
+                            .send(Ok(ResponseEvent::ServerModel(model.to_owned())))
+                            .await
+                            .is_err()
+                        {
+                            return;
                         }
                     }
                 }
@@ -415,6 +425,11 @@ async fn process_messages_sse(
             }
 
             "message_delta" => {
+                if let Some(delta) = &event.delta {
+                    if let Some(reason) = delta.get("stop_reason").and_then(|r| r.as_str()) {
+                        _stop_reason = Some(reason.to_owned());
+                    }
+                }
                 if let Some(usage_val) = &event.usage
                     && let Ok(u) = serde_json::from_value::<AnthropicUsage>(usage_val.clone())
                 {
@@ -427,6 +442,12 @@ async fn process_messages_sse(
                     let input = u.input_tokens.unwrap_or(0);
                     let output = u.output_tokens.unwrap_or(0);
                     let cached = u.cache_read_input_tokens.unwrap_or(0);
+                    if let Some(created) = u.cache_creation_input_tokens {
+                        debug!(
+                            cache_creation_input_tokens = created,
+                            "Anthropic cache creation tokens"
+                        );
+                    }
                     TokenUsage {
                         input_tokens: input,
                         cached_input_tokens: cached,
@@ -492,7 +513,6 @@ struct AnthropicUsage {
     input_tokens: Option<i64>,
     output_tokens: Option<i64>,
     cache_read_input_tokens: Option<i64>,
-    #[allow(dead_code)]
     cache_creation_input_tokens: Option<i64>,
 }
 
@@ -559,7 +579,16 @@ mod tests {
         }
 
         assert!(events.len() >= 4);
-        assert!(matches!(events[0], Ok(ResponseEvent::Created)));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Ok(ResponseEvent::ServerModel(_)))),
+            "must emit ServerModel from message_start"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, Ok(ResponseEvent::Created))),
+            "must emit Created"
+        );
 
         let mut found_text_delta = false;
         let mut found_output_item_done = false;

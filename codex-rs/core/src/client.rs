@@ -1149,6 +1149,9 @@ impl ModelClientSession {
             let model_output_cap = anthropic_max_output_tokens(&model_info.slug);
             let mut max_tokens: u32 = model_output_cap.min(16384);
 
+            // TODO: Support thinking.type: "adaptive" when ModelInfo gains
+            // an adaptive_thinking capability flag. Adaptive mode is preferred
+            // for Opus 4.6 and available for Sonnet 4.6.
             let thinking = effort.and_then(|e| {
                 let budget: u32 = match e {
                     ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal => return None,
@@ -1169,19 +1172,27 @@ impl ModelClientSession {
                 }))
             });
 
+            let has_tools = !anthropic_tools.is_empty();
             let request = MessagesApiRequest {
                 model: model_info.slug.clone(),
                 messages,
                 max_tokens,
                 stream: true,
                 system,
-                tools: if anthropic_tools.is_empty() {
-                    None
-                } else {
+                tools: if has_tools {
                     Some(anthropic_tools)
+                } else {
+                    None
                 },
-                tool_choice: None,
+                tool_choice: if has_tools {
+                    Some(serde_json::json!({"type": "auto"}))
+                } else {
+                    None
+                },
                 thinking,
+                temperature: None,
+                top_p: None,
+                top_k: None,
             };
 
             let mut extra_headers = ApiHeaderMap::new();
