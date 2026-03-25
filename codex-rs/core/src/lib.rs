@@ -15,6 +15,7 @@ mod auth_env_telemetry;
 mod client;
 mod client_common;
 pub mod codex;
+mod messages_wire;
 mod realtime_context;
 mod realtime_conversation;
 pub use codex::SteerInputError;
