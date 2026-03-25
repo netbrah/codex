@@ -1,10 +1,12 @@
 pub(crate) mod agent_jobs;
 pub mod apply_patch;
 mod artifacts;
+mod dir_stats;
 mod dynamic;
 mod grep_files;
 mod js_repl;
 mod list_dir;
+mod manifest_builder;
 mod mcp;
 mod mcp_resource;
 pub(crate) mod multi_agents;
@@ -20,6 +22,7 @@ mod tool_search;
 mod tool_suggest;
 pub(crate) mod unified_exec;
 mod view_image;
+mod workspace_index;
 
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
