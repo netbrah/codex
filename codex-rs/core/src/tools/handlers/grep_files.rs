@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
@@ -18,10 +17,10 @@ use crate::tools::registry::ToolKind;
 use super::dir_stats::estimate_scope_file_count;
 use super::dir_stats::load_dir_stats;
 use super::dir_stats::top_subdirs;
-use super::manifest_builder::filter_manifest;
+use super::search_rg::make_scope_tempfile;
+use super::workspace_index::ensure_index;
 use super::workspace_index::IndexStatus;
 use super::workspace_index::WorkspaceIndexConfig;
-use super::workspace_index::ensure_index;
 
 pub struct GrepFilesHandler;
 
@@ -181,32 +180,10 @@ async fn try_index_search(
         }
     }
 
-    let files = match filter_manifest(manifest_path, search_path) {
-        Ok(f) => f,
-        Err(_) => return Ok(None),
+    let tmp = match make_scope_tempfile(manifest_path, search_path) {
+        Some(t) => t,
+        None => return Ok(None),
     };
-
-    if files.is_empty() {
-        return Ok(Some(FunctionToolOutput::from_text(
-            "No matches found.".to_string(),
-            Some(false),
-        )));
-    }
-
-    let list_content = files.join("\n");
-    let mut tmp = tempfile::Builder::new()
-        .prefix("codex-grep-")
-        .suffix(".txt")
-        .tempfile()
-        .map_err(|e| {
-            FunctionCallError::RespondToModel(format!("failed to create temp file: {e}"))
-        })?;
-    tmp.write_all(list_content.as_bytes()).map_err(|e| {
-        FunctionCallError::RespondToModel(format!("failed to write temp file: {e}"))
-    })?;
-    tmp.flush().map_err(|e| {
-        FunctionCallError::RespondToModel(format!("failed to flush temp file: {e}"))
-    })?;
 
     let tmp_path = tmp.path().to_path_buf();
     let results = run_rg_from_manifest(pattern, include, &tmp_path, limit, cwd).await?;

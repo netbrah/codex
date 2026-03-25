@@ -1,6 +1,9 @@
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 
+use super::super::manifest_builder::build_manifest;
+use super::super::search_rg::make_scope_tempfile;
+use super::super::search_rg::run_rg_lines_direct;
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -239,7 +242,7 @@ fn build_definition_pattern_matches_rust_fn() {
 }
 
 // ---------------------------------------------------------------------------
-// Integration test using a temporary directory workspace
+// Integration tests using a temporary directory workspace
 // ---------------------------------------------------------------------------
 
 fn rg_available() -> bool {
@@ -250,38 +253,11 @@ fn rg_available() -> bool {
         .unwrap_or(false)
 }
 
-#[test]
-fn integration_parse_rg_lines_basic() {
-    let stdout = b"src/lib.rs:10:fn my_func(x: u32) {\nsrc/main.rs:5:my_func(42);\n";
-    let results = parse_rg_lines(stdout, 100);
-    assert_eq!(results.len(), 2);
-    assert_eq!(results[0].0, "src/lib.rs");
-    assert_eq!(results[0].1, 10);
-    assert_eq!(results[0].2, "fn my_func(x: u32) {");
-    assert_eq!(results[1].0, "src/main.rs");
-    assert_eq!(results[1].1, 5);
-}
-
-#[test]
-fn integration_parse_rg_lines_truncates() {
-    let stdout = b"a.rs:1:foo\nb.rs:2:bar\nc.rs:3:baz\n";
-    let results = parse_rg_lines(stdout, 2);
-    assert_eq!(results.len(), 2);
-}
-
-#[test]
-fn integration_parse_rg_lines_skips_malformed() {
-    // Lines without a valid `file:lineno:content` format should be skipped.
-    let stdout = b"only_two_parts\na.rs:not_a_number:content\nb.rs:5:ok\n";
-    let results = parse_rg_lines(stdout, 100);
-    assert_eq!(results.len(), 1, "only the valid line should be parsed");
-    assert_eq!(results[0].0, "b.rs");
-}
-
-/// Full round-trip: write a fake workspace, invoke the ripgrep helpers, and
-/// verify we find definition + references.
+/// Full round-trip using the direct (fallback) search path: write a fake
+/// workspace, invoke `run_rg_lines_direct`, and verify we find the definition
+/// and references.
 #[tokio::test]
-async fn integration_find_definition_and_callers() -> anyhow::Result<()> {
+async fn integration_find_definition_and_callers_direct() -> anyhow::Result<()> {
     if !rg_available() {
         eprintln!("rg not in PATH; skipping integration test");
         return Ok(());
@@ -327,9 +303,9 @@ fn test_compute_result() {
 "#,
     )?;
 
-    // Search for the definition.
+    // Search for the definition via the direct (fallback) path.
     let def_pattern = build_definition_pattern("compute_result");
-    let def_hits = run_rg_search_lines(&def_pattern, base, 5)
+    let def_hits = run_rg_lines_direct(&def_pattern, base, 5, Some(1))
         .await
         .map_err(anyhow::Error::msg)?;
     assert!(!def_hits.is_empty(), "should find definition");
@@ -339,9 +315,9 @@ fn test_compute_result() {
     );
     assert_eq!(def_hits[0].1, 2, "definition should be on line 2");
 
-    // Search for references.
+    // Search for references via the direct (fallback) path.
     let ref_pattern = format!(r"\b{}\b", "compute_result");
-    let ref_hits = run_rg_search_lines_all(&ref_pattern, base, 100)
+    let ref_hits = run_rg_lines_direct(&ref_pattern, base, 100, /*max_count_per_file=*/ None)
         .await
         .map_err(anyhow::Error::msg)?;
     assert!(ref_hits.len() >= 2, "should find at least 2 references");
@@ -377,4 +353,144 @@ fn test_compute_result() {
     );
 
     Ok(())
+}
+
+/// Full round-trip using the manifest-backed search path: build a manifest for
+/// the temporary workspace, create a scope temp file, and verify that
+/// `run_rg_lines_from_manifest` finds the same results as the direct path.
+#[tokio::test]
+async fn integration_find_definition_and_callers_via_manifest() -> anyhow::Result<()> {
+    if !rg_available() {
+        eprintln!("rg not in PATH; skipping integration test");
+        return Ok(());
+    }
+
+    let dir = tempdir()?;
+    let base = dir.path();
+
+    std::fs::write(
+        base.join("lib.rs"),
+        r#"
+pub fn compute_result(x: u32) -> u32 {
+    let y = helper(x);
+    y * 2
+}
+
+fn helper(x: u32) -> u32 {
+    x + 1
+}
+"#,
+    )?;
+    std::fs::write(
+        base.join("main.rs"),
+        r#"
+fn main() {
+    let v = compute_result(10);
+    println!("{}", v);
+}
+"#,
+    )?;
+    std::fs::write(
+        base.join("lib_test.rs"),
+        r#"
+#[test]
+fn test_compute_result() {
+    assert_eq!(compute_result(1), 4);
+}
+"#,
+    )?;
+
+    // Build a manifest for the temporary workspace.
+    let manifest_path = base.join("manifest.txt");
+    build_manifest(base, &manifest_path, usize::MAX).expect("manifest build should succeed");
+    assert!(manifest_path.exists(), "manifest file should exist");
+
+    // Create a scope temp file covering the whole workspace.
+    let tmp = make_scope_tempfile(&manifest_path, base)
+        .expect("make_scope_tempfile should succeed for populated scope");
+
+    // Search for the definition via the manifest path.
+    let def_pattern = build_definition_pattern("compute_result");
+    let def_hits = super::super::search_rg::run_rg_lines_from_manifest(
+        &def_pattern,
+        tmp.path(),
+        5,
+        Some(1),
+        base,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    assert!(
+        !def_hits.is_empty(),
+        "manifest search should find definition"
+    );
+    assert!(
+        def_hits[0].0.ends_with("lib.rs"),
+        "definition should be in lib.rs"
+    );
+
+    // Search for references via the manifest path.
+    let ref_pattern = format!(r"\b{}\b", "compute_result");
+    let ref_hits = super::super::search_rg::run_rg_lines_from_manifest(
+        &ref_pattern,
+        tmp.path(),
+        100,
+        /*max_count_per_file=*/ None,
+        base,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    assert!(
+        ref_hits.len() >= 2,
+        "manifest search should find at least 2 references"
+    );
+
+    Ok(())
+}
+
+/// Verify that `make_scope_tempfile` returns `None` for a scope that has no
+/// files in the manifest (graceful fallback signal).
+#[test]
+fn make_scope_tempfile_returns_none_for_empty_scope() {
+    let dir = tempdir().unwrap();
+    let base = dir.path();
+
+    // Write a manifest that only covers `sub_a/`.
+    let sub_a = base.join("sub_a");
+    std::fs::create_dir(&sub_a).unwrap();
+    std::fs::write(sub_a.join("file.rs"), "fn a() {}").unwrap();
+
+    let manifest_path = base.join("manifest.txt");
+    build_manifest(base, &manifest_path, usize::MAX).expect("manifest build");
+
+    // Requesting a scope that has no files in the manifest should return None.
+    let sub_b = base.join("sub_b_does_not_exist");
+    let result = make_scope_tempfile(&manifest_path, &sub_b);
+    assert!(
+        result.is_none(),
+        "make_scope_tempfile should return None for a scope with no manifest entries"
+    );
+}
+
+/// Verify that `make_scope_tempfile` succeeds when the scope has indexed files.
+#[test]
+fn make_scope_tempfile_succeeds_for_populated_scope() {
+    let dir = tempdir().unwrap();
+    let base = dir.path();
+
+    std::fs::write(base.join("a.rs"), "fn a() {}").unwrap();
+    std::fs::write(base.join("b.rs"), "fn b() {}").unwrap();
+
+    let manifest_path = base.join("manifest.txt");
+    build_manifest(base, &manifest_path, usize::MAX).expect("manifest build");
+
+    let tmp = make_scope_tempfile(&manifest_path, base);
+    assert!(
+        tmp.is_some(),
+        "make_scope_tempfile should return Some when files are in scope"
+    );
+    // The temp file should contain both paths.
+    let content = std::fs::read_to_string(tmp.unwrap().path()).unwrap();
+    assert!(content.contains("a.rs"), "temp file should list a.rs");
+    assert!(content.contains("b.rs"), "temp file should list b.rs");
 }
