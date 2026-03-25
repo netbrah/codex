@@ -1804,6 +1804,13 @@
             "responses"
           ],
           "type": "string"
+        },
+        {
+          "description": "The Anthropic Messages API at `/v1/messages`.",
+          "enum": [
+            "messages"
+          ],
+          "type": "string"
         }
       ]
     }

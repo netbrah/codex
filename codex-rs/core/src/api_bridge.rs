@@ -119,7 +119,10 @@ pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
                 CodexErr::Stream(msg, None)
             }
         },
-        ApiError::RateLimit(msg) => CodexErr::Stream(msg, None),
+        ApiError::RateLimit(_msg) => CodexErr::RetryLimit(RetryLimitReachedError {
+            status: http::StatusCode::TOO_MANY_REQUESTS,
+            request_id: None,
+        }),
     }
 }
 
