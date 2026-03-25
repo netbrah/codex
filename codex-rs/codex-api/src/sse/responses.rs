@@ -319,6 +319,7 @@ pub fn process_responses_event(
                 match serde_json::from_value::<ResponseCompleted>(resp_val) {
                     Ok(resp) => {
                         return Ok(Some(ResponseEvent::Completed {
+                            stop_reason: None,
                             response_id: resp.id,
                             token_usage: resp.usage.map(Into::into),
                         }));
@@ -609,7 +610,7 @@ mod tests {
         match &events[2] {
             Ok(ResponseEvent::Completed {
                 response_id,
-                token_usage,
+                token_usage, ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
@@ -711,7 +712,7 @@ mod tests {
         match &events[0] {
             Ok(ResponseEvent::Completed {
                 response_id,
-                token_usage,
+                token_usage, ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
@@ -936,7 +937,7 @@ mod tests {
             &events[1],
             ResponseEvent::Completed {
                 response_id,
-                token_usage: None
+                token_usage: None, ..
             } if response_id == "resp-1"
         );
     }
@@ -972,7 +973,7 @@ mod tests {
             &events[2],
             ResponseEvent::Completed {
                 response_id,
-                token_usage: None
+                token_usage: None, ..
             } if response_id == "resp-1"
         );
     }

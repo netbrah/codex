@@ -94,7 +94,7 @@ async fn process_messages_sse(
     let mut tracker = BlockTracker::new();
     let mut response_id = String::new();
     let mut usage_holder: Option<AnthropicUsage> = None;
-    let mut _stop_reason: Option<String> = None;
+    let mut stop_reason: Option<String> = None;
 
     loop {
         let response = timeout(idle_timeout, sse_stream.next()).await;
@@ -427,7 +427,8 @@ async fn process_messages_sse(
             "message_delta" => {
                 if let Some(delta) = &event.delta {
                     if let Some(reason) = delta.get("stop_reason").and_then(|r| r.as_str()) {
-                        _stop_reason = Some(reason.to_owned());
+                        trace!("stop_reason: {reason}");
+                        stop_reason = Some(reason.to_owned());
                     }
                 }
                 if let Some(usage_val) = &event.usage
@@ -454,15 +455,14 @@ async fn process_messages_sse(
                         output_tokens: output,
                         // Anthropic does not currently expose thinking token counts.
                         reasoning_output_tokens: 0,
-                        // Anthropic's input_tokens already includes cache reads, so
-                        // total = input + output (not input + cached + output, which
-                        // would double-count). cache_read_input_tokens is reported
-                        // separately for telemetry only.
-                        total_tokens: input + output,
+                        // Anthropic reports cache_read_input_tokens separately from
+                        // input_tokens, so total = input + cached + output.
+                        total_tokens: input + cached + output,
                     }
                 });
                 if tx_event
                     .send(Ok(ResponseEvent::Completed {
+                        stop_reason: stop_reason.take(),
                         response_id: response_id.clone(),
                         token_usage,
                     }))
@@ -543,10 +543,8 @@ mod tests {
             content.push('\n');
         }
         let reader = std::io::Cursor::new(content);
-        let stream = ReaderStream::new(reader).map(|r| {
-            r.map(|b| b)
-                .map_err(|e| codex_client::TransportError::Network(e.to_string()))
-        });
+        let stream = ReaderStream::new(reader)
+            .map(|r| r.map_err(|e| codex_client::TransportError::Network(e.to_string())));
         Box::pin(stream)
     }
 
@@ -586,7 +584,9 @@ mod tests {
             "must emit ServerModel from message_start"
         );
         assert!(
-            events.iter().any(|e| matches!(e, Ok(ResponseEvent::Created))),
+            events
+                .iter()
+                .any(|e| matches!(e, Ok(ResponseEvent::Created))),
             "must emit Created"
         );
 
@@ -607,6 +607,7 @@ mod tests {
                 Ok(ResponseEvent::Completed {
                     response_id,
                     token_usage,
+                    ..
                 }) => {
                     assert_eq!(response_id, "msg_123");
                     assert!(token_usage.is_some());
@@ -925,7 +926,7 @@ mod tests {
                 assert_eq!(usage.input_tokens, 100);
                 assert_eq!(usage.output_tokens, 42);
                 assert_eq!(usage.cached_input_tokens, 50);
-                assert_eq!(usage.total_tokens, 142);
+                assert_eq!(usage.total_tokens, 192);
                 found_usage = true;
             }
         }
@@ -1173,5 +1174,176 @@ mod tests {
             added_idx < done_idx,
             "OutputItemAdded must precede OutputItemDone"
         );
+    }
+
+    #[tokio::test]
+    async fn test_usage_includes_cache_read_in_total() {
+        let fixture = vec![
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_cache\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cache_read_input_tokens\":50,\"cache_creation_input_tokens\":25}}}",
+            "",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+            "",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}",
+            "",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}",
+            "",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":10}}",
+            "",
+            "data: {\"type\":\"message_stop\"}",
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+
+        for event in &events {
+            if let Ok(ResponseEvent::Completed { token_usage, .. }) = event {
+                let usage = token_usage.as_ref().expect("should have token usage");
+                assert_eq!(usage.input_tokens, 100);
+                assert_eq!(usage.cached_input_tokens, 50);
+                assert_eq!(usage.output_tokens, 10);
+                // total = input + cached + output = 100 + 50 + 10 = 160
+                assert_eq!(
+                    usage.total_tokens, 160,
+                    "total must include cache_read_input_tokens"
+                );
+                return;
+            }
+        }
+        panic!("did not find Completed event");
+    }
+
+    #[tokio::test]
+    async fn test_stop_reason_propagated_to_completed() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_sr","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut found_stop_reason = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(
+                    stop_reason.as_deref(),
+                    Some("end_turn"),
+                    "stop_reason must be propagated from message_delta"
+                );
+                found_stop_reason = true;
+            }
+        }
+        assert!(found_stop_reason, "must find Completed with stop_reason");
+    }
+
+    #[tokio::test]
+    async fn test_stop_reason_tool_use() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_tu","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"read_file","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/tmp/test\"}"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":15}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(stop_reason.as_deref(), Some("tool_use"));
+                found = true;
+            }
+        }
+        assert!(found, "must find Completed with stop_reason=tool_use");
+    }
+
+    #[tokio::test]
+    async fn test_stop_reason_max_tokens() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_mt","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Truncated"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":4096}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(stop_reason.as_deref(), Some("max_tokens"));
+                found = true;
+            }
+        }
+        assert!(found, "must find Completed with stop_reason=max_tokens");
+    }
+
+    #[tokio::test]
+    async fn test_stop_reason_stop_sequence() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_ss","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Count 1 2 3"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"STOP"},"usage":{"output_tokens":8}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(stop_reason.as_deref(), Some("stop_sequence"));
+                found = true;
+            }
+        }
+        assert!(found, "must find Completed with stop_reason=stop_sequence");
     }
 }

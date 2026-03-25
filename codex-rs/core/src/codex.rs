@@ -7311,9 +7311,18 @@ async fn try_run_sampling_request(
                 sess.services.models_manager.refresh_if_new_etag(etag).await;
             }
             ResponseEvent::Completed {
+                stop_reason,
                 response_id: _,
                 token_usage,
             } => {
+                // Log Anthropic stop_reason for diagnostics and future
+                // truncation-detection / auto-continue support.
+                if let Some(ref reason) = stop_reason {
+                    tracing::info!(
+                        anthropic_stop_reason = %reason,
+                        "Anthropic message completed"
+                    );
+                }
                 flush_assistant_text_segments_all(
                     &sess,
                     &turn_context,

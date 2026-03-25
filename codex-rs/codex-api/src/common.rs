@@ -75,6 +75,9 @@ pub enum ResponseEvent {
     /// client should not re-estimate them.
     ServerReasoningIncluded(bool),
     Completed {
+        /// Anthropic stop_reason from message_delta (end_turn, tool_use, max_tokens, stop_sequence).
+        /// None for Responses wire (stop semantics handled differently).
+        stop_reason: Option<String>,
         response_id: String,
         token_usage: Option<TokenUsage>,
     },
