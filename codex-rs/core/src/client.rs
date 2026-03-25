@@ -1128,12 +1128,9 @@ impl ModelClientSession {
                 RequestRouteTelemetry::for_endpoint("/messages"),
                 self.client.state.auth_env_telemetry.clone(),
             );
-            let client = ApiMessagesClient::new(
-                transport,
-                client_setup.api_provider,
-                client_setup.api_auth,
-            )
-            .with_telemetry(Some(request_telemetry));
+            let client =
+                ApiMessagesClient::new(transport, client_setup.api_provider, client_setup.api_auth)
+                    .with_telemetry(Some(request_telemetry));
 
             let input = prompt.get_formatted_input();
             let messages = conversation_to_anthropic_messages(&input);
