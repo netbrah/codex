@@ -21,6 +21,7 @@ pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<
                     "system" => continue,
                     "user" => "user",
                     "assistant" => "assistant",
+                    "developer" => continue, // already injected via system parameter
                     _ => "user",
                 };
 
@@ -56,7 +57,10 @@ pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<
                 arguments,
                 ..
             } => {
-                let input_val: Value = serde_json::from_str(arguments).unwrap_or(json!({}));
+                let input_val: Value = serde_json::from_str(arguments).unwrap_or_else(|e| {
+                    tracing::warn!("malformed tool arguments JSON, using empty object: {e}");
+                    json!({})
+                });
                 let block = json!({
                     "type": "tool_use",
                     "id": call_id,
@@ -84,7 +88,10 @@ pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<
                 input: input_str,
                 ..
             } => {
-                let input_val: Value = serde_json::from_str(input_str).unwrap_or(json!({}));
+                let input_val: Value = serde_json::from_str(input_str).unwrap_or_else(|e| {
+                    tracing::warn!("malformed tool arguments JSON, using empty object: {e}");
+                    json!({})
+                });
                 let block = json!({
                     "type": "tool_use",
                     "id": call_id,
@@ -692,5 +699,54 @@ mod tests {
         let tools: Vec<ToolSpec> = vec![];
         let anthropic_tools = tools_to_anthropic_format(&tools);
         assert!(anthropic_tools.is_empty());
+    }
+
+    #[test]
+    fn test_developer_messages_skipped() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "You have full permissions".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Hello".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input);
+        assert_eq!(messages.len(), 1, "developer messages should be skipped");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"][0]["text"], "Hello");
+    }
+
+    #[test]
+    fn test_malformed_arguments_uses_empty_object() {
+        let input = vec![ResponseItem::FunctionCall {
+            id: None,
+            name: "shell".to_string(),
+            namespace: None,
+            arguments: "not valid json{{{".to_string(),
+            call_id: "toolu_bad".to_string(),
+        }];
+
+        let messages = conversation_to_anthropic_messages(&input);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"][0]["type"], "tool_use");
+        assert_eq!(
+            messages[0]["content"][0]["input"],
+            json!({}),
+            "malformed arguments should fall back to empty object"
+        );
     }
 }

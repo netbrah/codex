@@ -45,6 +45,15 @@ pub enum WireApi {
     Messages,
 }
 
+impl WireApi {
+    /// Whether this wire API supports the reasoning effort parameter.
+    pub fn supports_reasoning_effort(&self) -> bool {
+        match self {
+            Self::Responses | Self::Messages => true,
+        }
+    }
+}
+
 impl fmt::Display for WireApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {

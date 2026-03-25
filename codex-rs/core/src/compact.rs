@@ -37,7 +37,13 @@ const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 const PRESERVE_FRACTION: f64 = 0.3;
 
 /// Minimum number of pre-compact items required to activate the 70/30 split.
+///
 /// Below this threshold, the classic user-messages + summary assembly is used.
+/// The threshold prevents the split from preserving initial context items
+/// (developer instructions, environment context) in the "recent 30%" portion,
+/// which would cause duplication when the next turn re-injects initial context.
+/// Long histories (>= 20 items) naturally place the split well past the
+/// initial context prefix, avoiding this issue.
 const MIN_ITEMS_FOR_SPLIT: usize = 20;
 
 /// Controls whether compaction replacement history must include initial context.
@@ -55,6 +61,11 @@ pub(crate) enum InitialContextInjection {
     DoNotInject,
 }
 
+/// Whether to use the server-side `/responses/compact` endpoint.
+///
+/// Only available for OpenAI providers using the Responses wire API.
+/// Non-OpenAI providers (e.g. Anthropic Messages API) always use
+/// inline (local LLM) compaction.
 pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
     provider.is_openai() && provider.wire_api == WireApi::Responses
 }
@@ -225,7 +236,7 @@ async fn run_compact_task_inner(
             id: None,
             role: "assistant".to_string(),
             content: vec![ContentItem::OutputText {
-                text: "Understood. Continuing from where we left off.".to_string(),
+                text: "Understood, continuing.".to_string(),
             }],
             end_turn: None,
             phase: None,

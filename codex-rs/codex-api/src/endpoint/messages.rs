@@ -84,6 +84,12 @@ impl<T: HttpTransport, A: AuthProvider> MessagesClient<T, A> {
             HeaderValue::from_static("2023-06-01"),
         );
 
+        // Required for extended thinking (interleaved thinking blocks).
+        headers.insert(
+            http::HeaderName::from_static("anthropic-beta"),
+            HeaderValue::from_static("interleaved-thinking-2025-05-14"),
+        );
+
         let stream_response = self
             .session
             .stream_with(Method::POST, Self::path(), headers, Some(body), |_| {})

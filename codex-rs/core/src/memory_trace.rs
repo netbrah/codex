@@ -54,7 +54,7 @@ pub async fn build_memories_from_trace_files(
         .summarize_memories(raw_memories, model_info, effort, session_telemetry)
         .await?;
     if output.is_empty() && !prepared.is_empty() {
-        tracing::debug!(
+        tracing::warn!(
             "memory summarization not available for this wire protocol; skipping {} trace(s)",
             prepared.len()
         );

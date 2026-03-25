@@ -119,10 +119,11 @@ pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
                 CodexErr::Stream(msg, None)
             }
         },
-        ApiError::RateLimit(_msg) => CodexErr::RetryLimit(RetryLimitReachedError {
-            status: http::StatusCode::TOO_MANY_REQUESTS,
-            request_id: None,
-        }),
+        ApiError::RateLimit(msg) => {
+            // Map to Stream so the backoff/retry loop in the turn runner
+            // can retry the request after a delay.
+            CodexErr::Stream(msg, None)
+        }
     }
 }
 
