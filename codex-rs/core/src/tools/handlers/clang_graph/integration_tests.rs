@@ -10,7 +10,9 @@
 
 use std::io::Write;
 
-use super::bfs_traversal::{bfs_call_graph, BfsConfig, BfsPriority};
+use super::bfs_traversal::BfsConfig;
+use super::bfs_traversal::BfsPriority;
+use super::bfs_traversal::bfs_call_graph;
 use super::compile_commands_index::CompileCommandsIndex;
 
 /// Runtime guard — returns true when the integration harness is active.
@@ -60,10 +62,7 @@ fn integration_compile_commands_index_roundtrip() {
     let args = index
         .get_args(std::path::Path::new("/src/main.cpp"))
         .expect("main.cpp not found");
-    assert!(args
-        .arguments
-        .iter()
-        .any(|a| a.contains("c++17")));
+    assert!(args.arguments.iter().any(|a| a.contains("c++17")));
 
     // Lookup by the `command`-style entry.
     let util_args = index
@@ -72,9 +71,11 @@ fn integration_compile_commands_index_roundtrip() {
     assert!(!util_args.arguments.is_empty());
 
     // Missing file returns None.
-    assert!(index
-        .get_args(std::path::Path::new("/src/missing.cpp"))
-        .is_none());
+    assert!(
+        index
+            .get_args(std::path::Path::new("/src/missing.cpp"))
+            .is_none()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -90,9 +91,11 @@ fn integration_bfs_heuristic_depth2() {
 
     // Simulate a 3-function chain: main -> process -> compute
     // Heuristic callers (from rg output) for root "process".
-    let heuristic_callers = vec![
-        ("src/main.cpp".to_string(), 42_u32, "  process(data);".to_string()),
-    ];
+    let heuristic_callers = vec![(
+        "src/main.cpp".to_string(),
+        42_u32,
+        "  process(data);".to_string(),
+    )];
     let heuristic_callees = vec![
         ("compute".to_string(), Some(15_u32), "function".to_string()),
         ("validate".to_string(), Some(20_u32), "function".to_string()),
@@ -108,7 +111,7 @@ fn integration_bfs_heuristic_depth2() {
     };
 
     let result = bfs_call_graph(
-        None,             // no USR (heuristic mode)
+        None, // no USR (heuristic mode)
         "process",
         "src/process.cpp",
         10,
@@ -119,9 +122,13 @@ fn integration_bfs_heuristic_depth2() {
     );
 
     // Root + 1 caller + 2 callees = 4 nodes.
-    assert_eq!(result.nodes.len(), 4, "expected 4 nodes, got {}: {:?}",
+    assert_eq!(
         result.nodes.len(),
-        result.nodes.iter().map(|n| &n.name).collect::<Vec<_>>());
+        4,
+        "expected 4 nodes, got {}: {:?}",
+        result.nodes.len(),
+        result.nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
+    );
     assert_eq!(result.engine, "heuristic");
     assert!(!result.truncated);
 
@@ -223,7 +230,10 @@ int main() {{ process(); return 0; }}
     // Initialize engine.
     let engine_result = super::clang_engine::ClangEngine::new(dir.path());
     if engine_result.is_err() {
-        eprintln!("ClangEngine init failed (libclang issue?), skipping: {:?}", engine_result.err());
+        eprintln!(
+            "ClangEngine init failed (libclang issue?), skipping: {:?}",
+            engine_result.err()
+        );
         return;
     }
     let mut engine = engine_result.unwrap();

@@ -7,7 +7,9 @@
 //! The traversal is callers-first by default (blast radius analysis), then
 //! fans out into callees.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::path::Path;
 
 use serde::Serialize;

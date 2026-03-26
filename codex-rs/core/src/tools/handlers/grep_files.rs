@@ -18,9 +18,9 @@ use super::dir_stats::estimate_scope_file_count;
 use super::dir_stats::load_dir_stats;
 use super::dir_stats::top_subdirs;
 use super::search_rg::make_scope_tempfile;
-use super::workspace_index::ensure_index;
 use super::workspace_index::IndexStatus;
 use super::workspace_index::WorkspaceIndexConfig;
+use super::workspace_index::ensure_index;
 
 pub struct GrepFilesHandler;
 

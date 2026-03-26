@@ -5,8 +5,13 @@
 //! tested via the graph by manually constructing CallEdge structs.
 
 use super::edge_extractor::CallEdge;
-use super::graph::{CallGraph, CachedEdges, FunctionNode, SerializableEdge, TraversalOrder};
-use super::graph::{load_edge_cache, save_edge_cache};
+use super::graph::CachedEdges;
+use super::graph::CallGraph;
+use super::graph::FunctionNode;
+use super::graph::SerializableEdge;
+use super::graph::TraversalOrder;
+use super::graph::load_edge_cache;
+use super::graph::save_edge_cache;
 
 fn make_edge(caller: &str, callee: &str) -> CallEdge {
     CallEdge {
@@ -58,10 +63,7 @@ fn test_ingest_deduplicates_edges() {
 #[test]
 fn test_deduplicates_nodes_by_usr() {
     let mut cg = CallGraph::new();
-    let edges = vec![
-        make_edge("main", "foo"),
-        make_edge("foo", "bar"),
-    ];
+    let edges = vec![make_edge("main", "foo"), make_edge("foo", "bar")];
     cg.ingest_edges(&edges);
 
     // "foo" appears as both callee (from main) and caller (to bar)

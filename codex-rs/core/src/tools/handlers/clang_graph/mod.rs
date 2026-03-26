@@ -6,12 +6,12 @@
 //!
 //! Gated behind the `clang-graph` cargo feature.
 
-mod compile_db;
+pub mod bfs_traversal;
+mod clang_engine;
 mod compile_commands_index;
+mod compile_db;
 mod edge_extractor;
 mod graph;
-mod clang_engine;
-pub mod bfs_traversal;
 
 #[cfg(test)]
 mod tests;
@@ -19,9 +19,18 @@ mod tests;
 #[cfg(test)]
 mod integration_tests;
 
-pub use compile_db::CompileDbLoader;
-pub use compile_commands_index::{CompileCommandsIndex, CompileArgs};
-pub use edge_extractor::{CallEdge, TuParser};
-pub use graph::{CallGraph, FunctionNode, TraversalOrder};
+pub use bfs_traversal::BfsConfig;
+pub use bfs_traversal::BfsEdge;
+pub use bfs_traversal::BfsNode;
+pub use bfs_traversal::BfsPriority;
+pub use bfs_traversal::BfsResult;
+pub use bfs_traversal::bfs_call_graph;
 pub use clang_engine::ClangEngine;
-pub use bfs_traversal::{BfsConfig, BfsPriority, BfsResult, BfsNode, BfsEdge, bfs_call_graph};
+pub use compile_commands_index::CompileArgs;
+pub use compile_commands_index::CompileCommandsIndex;
+pub use compile_db::CompileDbLoader;
+pub use edge_extractor::CallEdge;
+pub use edge_extractor::TuParser;
+pub use graph::CallGraph;
+pub use graph::FunctionNode;
+pub use graph::TraversalOrder;

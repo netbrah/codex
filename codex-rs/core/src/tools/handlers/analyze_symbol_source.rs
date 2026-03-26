@@ -16,21 +16,31 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
 #[cfg(feature = "clang-graph")]
-use super::clang_graph::{CallGraph, CompileDbLoader, TuParser};
+use super::clang_graph::CallGraph;
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::CompileDbLoader;
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::TuParser;
 
 #[cfg(feature = "clang-graph")]
-use super::clang_graph::{
-    BfsConfig, BfsPriority, BfsResult, ClangEngine, bfs_call_graph,
-};
+use super::clang_graph::BfsConfig;
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::BfsPriority;
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::BfsResult;
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::ClangEngine;
+#[cfg(feature = "clang-graph")]
+use super::clang_graph::bfs_call_graph;
 
 use super::dir_stats::estimate_scope_file_count;
 use super::dir_stats::load_dir_stats;
 use super::search_rg::make_scope_tempfile;
 use super::search_rg::run_rg_lines_direct;
 use super::search_rg::run_rg_lines_from_manifest;
-use super::workspace_index::ensure_index;
 use super::workspace_index::IndexStatus;
 use super::workspace_index::WorkspaceIndexConfig;
+use super::workspace_index::ensure_index;
 
 pub struct AnalyzeSymbolSourceHandler;
 
@@ -98,12 +108,15 @@ struct AnalyzeSymbolSourceArgs {
     max_depth: u32,
     /// Engine to use: "auto", "clang", or "heuristic".
     #[serde(default)]
+    #[cfg_attr(not(feature = "clang-graph"), allow(dead_code))]
     engine: EngineChoice,
     /// Maximum nodes in the graph output.
     #[serde(default = "default_max_nodes")]
+    #[cfg_attr(not(feature = "clang-graph"), allow(dead_code))]
     max_nodes: usize,
     /// Maximum edges in the graph output.
     #[serde(default = "default_max_edges")]
+    #[cfg_attr(not(feature = "clang-graph"), allow(dead_code))]
     max_edges: usize,
 }
 
@@ -157,6 +170,7 @@ struct AnalysisOutput {
     graph: Option<GraphOutput>,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_false(b: &bool) -> bool {
     !b
 }
@@ -378,6 +392,7 @@ impl ToolHandler for AnalyzeSymbolSourceHandler {
         let references_ms = ref_start.elapsed().as_millis() as u64;
 
         // Phase 3: callee extraction from the definition snippet.
+        #[cfg_attr(not(feature = "clang-graph"), allow(unused_mut))]
         let mut callees = definition
             .as_ref()
             .and_then(|d| d.source.as_deref())
@@ -843,8 +858,8 @@ fn run_bfs_phase(
     let def = definition.as_ref()?;
 
     // Attempt to initialize ClangEngine (best-effort).
-    let mut engine: Option<ClangEngine> = find_compile_db(scope_path)
-        .and_then(|db_dir| ClangEngine::new(&db_dir).ok());
+    let mut engine: Option<ClangEngine> =
+        find_compile_db(scope_path).and_then(|db_dir| ClangEngine::new(&db_dir).ok());
 
     // Determine engine eligibility based on user preference.
     match args.engine {
@@ -862,8 +877,7 @@ fn run_bfs_phase(
     // If we have a clang engine, try to find the root symbol's USR.
     let root_usr: Option<String> = engine.as_mut().and_then(|eng| {
         eng.try_parse_file(std::path::Path::new(&def.file));
-        eng.find_best_match(base_name)
-            .map(|node| node.usr.clone())
+        eng.find_best_match(base_name).map(|node| node.usr.clone())
     });
 
     // Convert heuristic callers into the tuple format expected by bfs_call_graph.
@@ -885,7 +899,9 @@ fn run_bfs_phase(
             (
                 c.callee.clone(),
                 c.line,
-                c.call_type.clone().unwrap_or_else(|| "function".to_string()),
+                c.call_type
+                    .clone()
+                    .unwrap_or_else(|| "function".to_string()),
             )
         })
         .collect();

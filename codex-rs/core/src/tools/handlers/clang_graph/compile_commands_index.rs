@@ -1,12 +1,18 @@
-//! On-disk indexed lookup for compile_commands.json.
+//! Indexed lookup for compile_commands.json.
 //!
-//! Builds a lightweight in-memory index mapping file paths to byte offsets
-//! in the original JSON file, so we can look up compile args for any file
-//! without holding 60k entries in RAM at once.
+//! Builds a lightweight in-memory index mapping file paths to their
+//! array positions in compile_commands.json.  The index phase only
+//! deserializes the `"file"` field of each entry (`MinimalEntry`),
+//! keeping peak memory proportional to the number of source files
+//! rather than the size of each entry's `arguments` array.
+//!
+//! Lookups re-read and fully-parse the file on demand; the OS page-cache
+//! makes this fast for the common case where compile_commands.json fits
+//! in memory.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
@@ -48,99 +54,51 @@ impl CompileCommandEntry {
     }
 }
 
-/// Byte-offset index into compile_commands.json.
+/// Array-index lookup into compile_commands.json.
 ///
-/// Rather than deserializing all 60k+ entries, we scan the file once to
-/// map each `"file"` value to the byte range of its JSON object.  On
-/// lookup we seek to that offset and deserialize only the requested entry.
+/// Maps canonicalized file paths to their array index in the
+/// compile_commands.json array.  During build, only the minimal
+/// `"file"` field is deserialized per entry so memory use scales
+/// with the number of entries, not the size of their argument lists.
 pub struct CompileCommandsIndex {
     db_path: PathBuf,
-    /// Canonicalized file path → (byte_offset_of_`{`, byte_length_of_object).
-    index: HashMap<PathBuf, (u64, u64)>,
+    /// Canonicalized file path → array index in the JSON array.
+    index: HashMap<PathBuf, u64>,
 }
 
 impl CompileCommandsIndex {
     /// Build an index by scanning the compile_commands.json file.
     ///
-    /// This reads the entire file to locate object boundaries and extract
-    /// `"file"` values, but does NOT deserialize `arguments`/`command` for
-    /// each entry — keeping peak memory far below a full parse.
+    /// Deserializes only the `"file"` field of each entry during indexing.
+    /// The full `arguments`/`command` fields are parsed on demand in
+    /// [`Self::get_args`].
     pub fn build(compile_commands_path: &Path) -> Result<Self, String> {
-        let file = std::fs::File::open(compile_commands_path)
-            .map_err(|e| format!("failed to open {}: {e}", compile_commands_path.display()))?;
-        let file_len = file
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let data = std::fs::read_to_string(compile_commands_path)
+            .map_err(|e| format!("failed to read {}: {e}", compile_commands_path.display()))?;
 
-        // For files under 64 MB, just load into memory and parse with serde streaming.
-        // For larger files, use the byte-scanning approach.
-        if file_len < 64 * 1024 * 1024 {
-            return Self::build_small(compile_commands_path);
-        }
-
-        Self::build_large(compile_commands_path, file)
-    }
-
-    /// Fast path for files that fit comfortably in memory (<64 MB).
-    fn build_small(path: &Path) -> Result<Self, String> {
-        let data = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-
-        // Deserialize just file keys — we parse the full array but only keep file paths.
         let entries: Vec<MinimalEntry> = serde_json::from_str(&data)
             .map_err(|e| format!("failed to parse compile_commands.json: {e}"))?;
 
         let mut index = HashMap::with_capacity(entries.len());
-        // For the small path, we store index into the entries Vec (encoded as offset).
-        // We'll re-parse on lookup, but this is fast.
         for (i, entry) in entries.iter().enumerate() {
-            let file_path = PathBuf::from(&entry.file);
-            let canonical = normalize_path(&file_path);
-            index.insert(canonical, (i as u64, 0));
+            let canonical = normalize_path(Path::new(&entry.file));
+            index.insert(canonical, i as u64);
         }
 
         Ok(Self {
-            db_path: path.to_path_buf(),
-            index,
-        })
-    }
-
-    /// Slow path for very large compile_commands.json (>64 MB).
-    /// Scans byte-by-byte for JSON object boundaries.
-    fn build_large(path: &Path, file: std::fs::File) -> Result<Self, String> {
-        let mut reader = BufReader::with_capacity(256 * 1024, file);
-        let mut index = HashMap::new();
-        let mut buf = String::new();
-
-        // Read entire file (streaming would be better but this works for now).
-        reader
-            .read_to_string(&mut buf)
-            .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-
-        // Parse as array of entries, extracting just the file key + byte positions.
-        let entries: Vec<MinimalEntry> = serde_json::from_str(&buf)
-            .map_err(|e| format!("failed to parse compile_commands.json: {e}"))?;
-
-        for (i, entry) in entries.iter().enumerate() {
-            let file_path = PathBuf::from(&entry.file);
-            let canonical = normalize_path(&file_path);
-            index.insert(canonical, (i as u64, 0));
-        }
-
-        Ok(Self {
-            db_path: path.to_path_buf(),
+            db_path: compile_commands_path.to_path_buf(),
             index,
         })
     }
 
     /// Look up compile args for a single file.
+    ///
+    /// Re-reads and parses the compile_commands.json file; relies on the OS
+    /// page-cache for performance on repeated lookups.
     pub fn get_args(&self, file: &Path) -> Option<CompileArgs> {
         let canonical = normalize_path(file);
-        let &(entry_index, _) = self.index.get(&canonical)?;
+        let &entry_index = self.index.get(&canonical)?;
 
-        // Re-parse the file to get the specific entry.
-        // For the common case (<64MB), this is fast because OS caches the file.
         let data = std::fs::read_to_string(&self.db_path).ok()?;
         let entries: Vec<CompileCommandEntry> = serde_json::from_str(&data).ok()?;
         let entry = entries.into_iter().nth(entry_index as usize)?;

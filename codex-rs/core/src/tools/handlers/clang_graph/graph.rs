@@ -1,14 +1,20 @@
 //! Call graph data structure backed by petgraph with DFS/BFS traversal.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 
-use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::visit::{Bfs, Dfs, DfsPostOrder};
 use petgraph::Direction;
-use serde::{Deserialize, Serialize};
+use petgraph::graph::DiGraph;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::Bfs;
+use petgraph::visit::Dfs;
+use petgraph::visit::DfsPostOrder;
+use serde::Deserialize;
+use serde::Serialize;
 
-use super::edge_extractor::{CallEdge, FunctionInfo};
+use super::edge_extractor::CallEdge;
+use super::edge_extractor::FunctionInfo;
 
 /// Metadata stored per node in the call graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +95,11 @@ impl CallGraph {
     }
 
     /// Get or insert a function node by USR.
-    fn get_or_insert_node(&mut self, usr: &str, default: impl FnOnce() -> FunctionNode) -> NodeIndex {
+    fn get_or_insert_node(
+        &mut self,
+        usr: &str,
+        default: impl FnOnce() -> FunctionNode,
+    ) -> NodeIndex {
         if let Some(&idx) = self.node_map.get(usr) {
             return idx;
         }
@@ -482,22 +492,17 @@ pub fn save_edge_cache(
     file_key: &str,
     cached: &CachedEdges,
 ) -> Result<(), String> {
-    std::fs::create_dir_all(cache_dir)
-        .map_err(|e| format!("failed to create cache dir: {e}"))?;
+    std::fs::create_dir_all(cache_dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
 
     let cache_file = cache_dir.join(format!("{}.bin", sanitize_filename(file_key)));
-    let encoded = bincode::serialize(cached)
-        .map_err(|e| format!("failed to serialize edge cache: {e}"))?;
-    std::fs::write(&cache_file, encoded)
-        .map_err(|e| format!("failed to write edge cache: {e}"))?;
+    let encoded =
+        bincode::serialize(cached).map_err(|e| format!("failed to serialize edge cache: {e}"))?;
+    std::fs::write(&cache_file, encoded).map_err(|e| format!("failed to write edge cache: {e}"))?;
     Ok(())
 }
 
 /// Load cached edges for a file from disk.
-pub fn load_edge_cache(
-    cache_dir: &Path,
-    file_key: &str,
-) -> Option<CachedEdges> {
+pub fn load_edge_cache(cache_dir: &Path, file_key: &str) -> Option<CachedEdges> {
     let cache_file = cache_dir.join(format!("{}.bin", sanitize_filename(file_key)));
     let data = std::fs::read(&cache_file).ok()?;
     bincode::deserialize(&data).ok()

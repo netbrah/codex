@@ -1,9 +1,11 @@
 //! Compilation database loader — extracts per-file compile arguments
 //! from compile_commands.json using libclang's CompilationDatabase API.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
-use clang::{Clang, CompilationDatabase};
+use clang::Clang;
+use clang::CompilationDatabase;
 
 /// Per-file compile command resolved from the compilation database.
 #[derive(Debug, Clone)]

@@ -5,11 +5,13 @@
 //! and validate caller→callee relationships via USR matching.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 use super::compile_db::CompileDbLoader;
 use super::edge_extractor::TuParser;
-use super::graph::{CallGraph, FunctionNode};
+use super::graph::CallGraph;
+use super::graph::FunctionNode;
 
 /// High-level engine for on-demand TU parsing and call graph queries.
 ///
@@ -42,22 +44,18 @@ impl ClangEngine {
     /// Returns `Ok(true)` if parsing happened, `Ok(false)` if already parsed,
     /// `Err` on parse failure.
     pub fn parse_file(&mut self, file: &Path) -> Result<bool, String> {
-        let canonical = std::fs::canonicalize(file)
-            .unwrap_or_else(|_| file.to_path_buf());
+        let canonical = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
 
         if self.parsed_files.contains(&canonical) {
             return Ok(false);
         }
 
-        let args = self.loader.get_compile_args(file).ok_or_else(|| {
-            format!(
-                "no compile command found for {}",
-                file.display()
-            )
-        })?;
+        let args = self
+            .loader
+            .get_compile_args(file)
+            .ok_or_else(|| format!("no compile command found for {}", file.display()))?;
 
-        let (edges, functions) =
-            TuParser::extract_edges_and_functions(self.loader.clang(), &args)?;
+        let (edges, functions) = TuParser::extract_edges_and_functions(self.loader.clang(), &args)?;
 
         self.graph.ingest_edges(&edges);
         self.graph.ingest_functions(&functions);
@@ -125,10 +123,14 @@ impl ClangEngine {
 
         // Check: does any function defined in caller_file have an edge to target_usr?
         let callers = self.graph.direct_callers(target_usr);
-        let caller_file_str = caller_file.to_string_lossy();
+        let canonical_caller =
+            std::fs::canonicalize(caller_file).unwrap_or_else(|_| caller_file.to_path_buf());
+        let canonical_str = canonical_caller.to_string_lossy();
         Ok(callers.iter().any(|node| {
-            node.file == caller_file_str.as_ref()
-                || node.file.ends_with(caller_file_str.as_ref())
+            // Compare canonicalized paths to avoid false positives from suffix matching.
+            let node_canonical = std::fs::canonicalize(Path::new(&node.file))
+                .unwrap_or_else(|_| Path::new(&node.file).to_path_buf());
+            node_canonical.to_string_lossy() == canonical_str.as_ref()
         }))
     }
 

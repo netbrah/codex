@@ -3,7 +3,12 @@
 
 use std::path::Path;
 
-use clang::{Clang, Entity, EntityKind, EntityVisitResult, Index, TranslationUnit};
+use clang::Clang;
+use clang::Entity;
+use clang::EntityKind;
+use clang::EntityVisitResult;
+use clang::Index;
+use clang::TranslationUnit;
 // TODO: Once clang-rs exposes raw CXCursor, switch from synthetic USR to:
 //   use clang_sys::{clang_getCursorUSR, clang_getCString, clang_disposeString, CXCursor};
 
@@ -48,10 +53,7 @@ impl TuParser {
     /// caller→callee edges.
     ///
     /// This is the core operation: one TU in, Vec<CallEdge> out.
-    pub fn extract_edges(
-        clang: &Clang,
-        args: &FileCompileArgs,
-    ) -> Result<Vec<CallEdge>, String> {
+    pub fn extract_edges(clang: &Clang, args: &FileCompileArgs) -> Result<Vec<CallEdge>, String> {
         let index = Index::new(clang, false, false);
         let arg_strs: Vec<&str> = args.arguments.iter().map(|s| s.as_str()).collect();
 
@@ -104,9 +106,7 @@ impl TuParser {
             // Skip entities not from the main file to reduce noise from headers.
             // We still recurse into the main file's AST.
             let location = child.get_location();
-            let is_main_file = location
-                .map(|loc| loc.is_in_main_file())
-                .unwrap_or(false);
+            let is_main_file = location.map(|loc| loc.is_in_main_file()).unwrap_or(false);
 
             match child.get_kind() {
                 EntityKind::FunctionDecl
@@ -138,9 +138,7 @@ impl TuParser {
 
                 EntityKind::CallExpr => {
                     if let Some(ref caller) = current_fn {
-                        let callee_ref = child
-                            .get_reference()
-                            .or_else(|| child.get_definition());
+                        let callee_ref = child.get_reference().or_else(|| child.get_definition());
 
                         let callee_usr = callee_ref
                             .as_ref()
@@ -193,9 +191,7 @@ impl TuParser {
     ) {
         entity.visit_children(|child, _parent| {
             let location = child.get_location();
-            let is_main_file = location
-                .map(|loc| loc.is_in_main_file())
-                .unwrap_or(false);
+            let is_main_file = location.map(|loc| loc.is_in_main_file()).unwrap_or(false);
 
             match child.get_kind() {
                 EntityKind::FunctionDecl
@@ -229,9 +225,7 @@ impl TuParser {
 
                 EntityKind::CallExpr => {
                     if let Some(ref caller) = current_fn {
-                        let callee_ref = child
-                            .get_reference()
-                            .or_else(|| child.get_definition());
+                        let callee_ref = child.get_reference().or_else(|| child.get_definition());
 
                         let callee_usr = callee_ref
                             .as_ref()
@@ -313,9 +307,9 @@ impl TuParser {
             .get_location()
             .and_then(|loc| {
                 let file_loc = loc.get_file_location();
-                let file = file_loc.file.map(|f| {
-                    f.get_path().to_string_lossy().into_owned()
-                })?;
+                let file = file_loc
+                    .file
+                    .map(|f| f.get_path().to_string_lossy().into_owned())?;
                 Some((file, file_loc.line))
             })
             .unwrap_or_else(|| (String::new(), 0))
