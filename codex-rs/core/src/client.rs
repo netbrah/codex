@@ -1193,6 +1193,7 @@ impl ModelClientSession {
                 temperature: None,
                 top_p: None,
                 top_k: None,
+                stop_sequences: None,
             };
 
             let mut extra_headers = ApiHeaderMap::new();
