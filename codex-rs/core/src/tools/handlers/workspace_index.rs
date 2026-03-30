@@ -12,7 +12,9 @@ use super::dir_stats::build_dir_stats;
 use super::dir_stats::save_dir_stats;
 use super::manifest_builder::build_manifest;
 
-const DEFAULT_INDEX_ROOT: &str = "/var/tmp/codex-index";
+fn default_index_root() -> PathBuf {
+    std::env::temp_dir().join("codex-index")
+}
 const DEFAULT_TTL_SECS: u64 = 1800;
 const DEFAULT_PRUNE_DIR_FILES: usize = 150_000;
 const DEFAULT_MAX_SCOPE_FILES: usize = 50_000;
@@ -38,7 +40,7 @@ impl WorkspaceIndexConfig {
     pub fn from_env() -> Self {
         let index_root = std::env::var("CODEX_INDEX_ROOT")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_INDEX_ROOT));
+            .unwrap_or_else(|_| default_index_root());
         let ttl_secs = std::env::var("CODEX_INDEX_TTL_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -168,15 +170,23 @@ async fn do_build_index(
     std::fs::create_dir_all(&paths.root)?;
 
     let lock_path = paths.root.join(".lock");
-    // create_new ensures only one builder runs at a time.
-    std::fs::OpenOptions::new()
+    // If the lock already exists, another builder is running; treat that as a no-op.
+    match std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(&lock_path)?;
-
-    let result = do_build_index_inner(&workspace_root, &paths, &config).await;
-    let _ = std::fs::remove_file(&lock_path);
-    result
+        .open(&lock_path)
+    {
+        Ok(_) => {
+            let result = do_build_index_inner(&workspace_root, &paths, &config).await;
+            let _ = std::fs::remove_file(&lock_path);
+            result
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Another index build is already in progress for this workspace.
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 async fn do_build_index_inner(

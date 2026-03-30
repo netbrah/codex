@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::path::Path;
 
 use petgraph::Direction;
@@ -379,20 +380,16 @@ impl CallGraph {
         // For incoming traversal, we manually BFS/DFS following Incoming edges.
         match order {
             TraversalOrder::Bfs | TraversalOrder::DfsPreorder => {
-                let mut stack_or_queue: Vec<(NodeIndex, u32)> = vec![(start, 0)];
+                let mut queue: VecDeque<(NodeIndex, u32)> = VecDeque::new();
+                queue.push_back((start, 0));
                 let mut visited: HashSet<NodeIndex> = HashSet::new();
                 visited.insert(start);
 
                 while let Some((node, depth)) = if order == TraversalOrder::Bfs {
-                    // BFS: pop from front.
-                    if stack_or_queue.is_empty() {
-                        None
-                    } else {
-                        Some(stack_or_queue.remove(0))
-                    }
+                    queue.pop_front()
                 } else {
                     // DFS: pop from back.
-                    stack_or_queue.pop()
+                    queue.pop_back()
                 } {
                     if let Some(max) = max_depth {
                         if depth > max {
@@ -409,7 +406,7 @@ impl CallGraph {
                     });
                     for neighbor in self.graph.neighbors_directed(node, Direction::Incoming) {
                         if visited.insert(neighbor) {
-                            stack_or_queue.push((neighbor, depth + 1));
+                            queue.push_back((neighbor, depth + 1));
                         }
                     }
                 }

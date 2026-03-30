@@ -1964,6 +1964,46 @@ fn create_analyze_symbol_source_tool() -> ToolSpec {
                 ),
             },
         ),
+        (
+            "maxDepth".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Maximum BFS depth for call graph traversal (0 = legacy behavior, \
+                     1-2 = return structured graph). Default 0."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "engine".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Engine for graph analysis: \"auto\" (default, use clang if available), \
+                     \"clang\" (force libclang), or \"heuristic\" (force ripgrep)."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "maxNodes".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Maximum number of nodes in the BFS graph output before truncation. \
+                     Default 200."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "maxEdges".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Maximum number of edges in the BFS graph output before truncation. \
+                     Default 500."
+                        .to_string(),
+                ),
+            },
+        ),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {

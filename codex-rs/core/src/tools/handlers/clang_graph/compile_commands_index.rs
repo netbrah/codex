@@ -39,9 +39,9 @@ struct CompileCommandEntry {
 impl CompileCommandEntry {
     fn into_compile_args(self) -> CompileArgs {
         let arguments = if self.arguments.is_empty() {
-            // Fall back to splitting `command` on whitespace.
+            // Fall back to shell-tokenizing `command` to handle quoted paths.
             self.command
-                .map(|cmd| cmd.split_whitespace().map(String::from).collect())
+                .and_then(|cmd| shlex::split(&cmd))
                 .unwrap_or_default()
         } else {
             self.arguments
@@ -128,9 +128,17 @@ struct MinimalEntry {
     file: String,
 }
 
-/// Normalize a path for consistent lookup (resolve `.`, `..`, lowercase on case-insensitive FS).
+/// Normalize a path for consistent lookup by resolving `.` and `..` via
+/// [`std::fs::canonicalize`].  Falls back to the path as-is when the file
+/// does not exist on disk (common during indexing of compile DB entries
+/// that reference generated files).
+///
+/// Note: this does **not** perform case-folding.  On case-insensitive
+/// filesystems (macOS HFS+/APFS, Windows NTFS) `canonicalize` already
+/// returns the on-disk casing which is sufficient for dedup within a
+/// single compile DB, but cross-DB lookups with differing casing may
+/// miss.
 fn normalize_path(path: &Path) -> PathBuf {
-    // Try to canonicalize; fall back to the path as-is.
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 

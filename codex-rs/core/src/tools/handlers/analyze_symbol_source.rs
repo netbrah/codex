@@ -628,7 +628,8 @@ pub fn base_symbol_name(symbol: &str) -> &str {
 
 /// Returns `true` if the file path looks like a test file.
 pub fn is_test_file(path: &str) -> bool {
-    let p = path.to_lowercase();
+    // Normalize backslashes so Windows paths are detected correctly.
+    let p = path.to_lowercase().replace('\\', "/");
     p.contains("/test/")
         || p.contains("/tests/")
         || p.contains("_test.")
@@ -815,7 +816,10 @@ async fn count_files_in_scope(scope_path: &Path) -> Result<usize, String> {
     .map_err(|e| format!("failed to launch rg: {e}"))?;
 
     match output.status.code() {
-        Some(0) | Some(1) => Ok(output.stdout.iter().filter(|&&b| b == b'\n').count()),
+        Some(0) | Some(1) => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            Ok(text.lines().filter(|l| !l.is_empty()).count())
+        }
         _ => Err(format!(
             "rg --files failed: {}",
             String::from_utf8_lossy(&output.stderr)

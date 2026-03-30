@@ -269,18 +269,18 @@ impl TuParser {
         });
     }
 
-    /// Extract USR from a clang Entity using clang-sys FFI.
+    /// Compute a best-effort, synthetic "USR" for a clang `Entity`.
     ///
-    /// clang-rs doesn't expose USR directly, so we drop to the C API.
+    /// This does *not* currently use `clang-sys` / `CXCursor` USRs. Instead,
+    /// we approximate identity using the entity's display name, semantic
+    /// parent, and source location. The resulting string is only guaranteed
+    /// to be stable within a single translation-unit parse and must not be
+    /// treated as a globally stable or ABI-level identifier.
     fn get_usr_safe(entity: &Entity<'_>) -> String {
-        // SAFETY: Entity wraps a valid CXCursor. We access the raw cursor
-        // via the debug representation or by re-creating it. However,
-        // clang-rs doesn't expose the raw CXCursor, so we use
-        // get_display_name + get_location as a fallback identity.
-        //
-        // TODO: For production, patch clang-rs to expose raw cursor or
-        // use clang-sys directly for the full pipeline. For now, we
-        // construct a synthetic USR from name + location.
+        // NOTE: clang-rs doesn't yet expose the underlying CXCursor needed to
+        // call `clang_getCursorUSR`. Until that is available (or we switch to
+        // using clang-sys directly in this code), we fall back to a synthetic
+        // identifier derived from name + file:line (and optional parent).
         let name = entity.get_display_name().unwrap_or_default();
         let (file, line) = Self::get_file_line(entity);
         let parent = entity

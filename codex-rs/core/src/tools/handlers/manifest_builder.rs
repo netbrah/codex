@@ -106,20 +106,22 @@ pub(super) fn build_manifest_with_stats(
 /// Returns the lines from the manifest that start with the given `scope_prefix`.
 pub fn filter_manifest(manifest_path: &Path, scope_prefix: &Path) -> anyhow::Result<Vec<String>> {
     let content = std::fs::read_to_string(manifest_path)?;
-    let prefix_str = scope_prefix.to_string_lossy().into_owned();
-    let prefix_with_sep = if prefix_str.ends_with('/') {
-        prefix_str.clone()
-    } else {
-        format!("{prefix_str}/")
-    };
 
     let results = content
         .lines()
-        .filter(|line| {
-            let l = line.trim();
-            !l.is_empty() && (l.starts_with(prefix_with_sep.as_str()) || l == prefix_str.as_str())
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+
+            let manifest_path = Path::new(trimmed);
+            if manifest_path == scope_prefix || manifest_path.starts_with(scope_prefix) {
+                Some(line.to_owned())
+            } else {
+                None
+            }
         })
-        .map(str::to_owned)
         .collect();
 
     Ok(results)

@@ -132,6 +132,9 @@ pub(super) async fn run_rg_lines_direct(
 }
 
 /// Parse `filename:lineno:content` lines from ripgrep `--no-heading -n` output.
+///
+/// Handles Windows drive-letter paths (e.g. `C:\src\file.cpp:12:content`)
+/// by detecting the `X:` prefix before splitting on `:`.
 pub(super) fn parse_rg_lines(stdout: &[u8], max_results: usize) -> Vec<(String, u32, String)> {
     let mut results = Vec::new();
     for raw in stdout.split(|&b| b == b'\n') {
@@ -141,11 +144,30 @@ pub(super) fn parse_rg_lines(stdout: &[u8], max_results: usize) -> Vec<(String, 
         let Ok(line) = std::str::from_utf8(raw) else {
             continue;
         };
-        // Format: "path/to/file.rs:42:content here"
-        let mut parts = line.splitn(3, ':');
-        let (Some(file), Some(lineno_str), Some(content)) =
-            (parts.next(), parts.next(), parts.next())
-        else {
+
+        // On Windows, rg output can start with a drive letter like `C:\...`.
+        // Detect that and skip past the drive prefix before splitting on `:`.
+        let (file, rest) = if line.len() >= 3
+            && line.as_bytes()[0].is_ascii_alphabetic()
+            && line.as_bytes()[1] == b':'
+            && (line.as_bytes()[2] == b'\\' || line.as_bytes()[2] == b'/')
+        {
+            // Drive-letter path: split the remainder after the drive prefix.
+            let after_drive = &line[2..];
+            match after_drive.find(':') {
+                Some(pos) => (&line[..2 + pos], &line[2 + pos + 1..]),
+                None => continue,
+            }
+        } else {
+            match line.find(':') {
+                Some(pos) => (&line[..pos], &line[pos + 1..]),
+                None => continue,
+            }
+        };
+
+        // `rest` is now `lineno:content`.
+        let mut parts = rest.splitn(2, ':');
+        let (Some(lineno_str), Some(content)) = (parts.next(), parts.next()) else {
             continue;
         };
         let Ok(lineno) = lineno_str.parse::<u32>() else {
@@ -204,5 +226,15 @@ mod tests {
     fn parse_rg_lines_empty_input() {
         let results = parse_rg_lines(b"", 100);
         assert_eq!(results, vec![]);
+    }
+
+    #[test]
+    fn parse_rg_lines_windows_drive_letter() {
+        let stdout = b"C:\\src\\file.cpp:12:int main() {\n";
+        let results = parse_rg_lines(stdout, 100);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "C:\\src\\file.cpp");
+        assert_eq!(results[0].1, 12);
+        assert_eq!(results[0].2, "int main() {");
     }
 }
