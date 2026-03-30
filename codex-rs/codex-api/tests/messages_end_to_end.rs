@@ -102,6 +102,7 @@ fn simple_request() -> MessagesApiRequest {
         temperature: None,
         top_p: None,
         top_k: None,
+        stop_sequences: None,
     }
 }
 
@@ -661,6 +662,31 @@ fn messages_api_request_omits_sampling_params_when_none() {
         model: "claude-sonnet-4.6".to_string(),
         messages: vec![],
         max_tokens: 1024,
+/// Verifies that `stop_sequences` is serialized into the request body and that
+/// the response correctly reports `stop_reason: "stop_sequence"` when the model
+/// halts on one of the configured sequences.
+#[tokio::test]
+async fn messages_stop_sequences_end_to_end() -> Result<()> {
+    let body = build_messages_sse(&[
+        r#"data: {"type":"message_start","message":{"id":"msg_stop_seq","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+        "",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"counting 1 2 3"}}"#,
+        "",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"STOP"},"usage":{"output_tokens":5}}"#,
+        "",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+    ]);
+
+    // Build a request WITH stop_sequences populated.
+    let request = MessagesApiRequest {
+        model: "claude-sonnet-4.6".to_string(),
+        messages: vec![json!({"role": "user", "content": [{"type": "text", "text": "count"}]})],
+        max_tokens: 512,
         stream: true,
         system: None,
         tools: None,
@@ -684,4 +710,48 @@ fn messages_api_request_omits_sampling_params_when_none() {
         v.get("top_k").is_none(),
         "top_k should be omitted when None"
     );
+        stop_sequences: Some(vec!["STOP".to_string(), "</answer>".to_string()]),
+    };
+
+    // Verify the field serializes correctly.
+    let serialized = serde_json::to_value(&request)?;
+    assert_eq!(
+        serialized["stop_sequences"],
+        json!(["STOP", "</answer>"]),
+        "stop_sequences must appear in serialized request body"
+    );
+
+    // Verify None omits the field entirely.
+    let request_none = simple_request();
+    let serialized_none = serde_json::to_value(&request_none)?;
+    assert!(
+        serialized_none.get("stop_sequences").is_none(),
+        "stop_sequences must be omitted when None"
+    );
+
+    // Verify SSE response handling for stop_sequence stop_reason.
+    let transport = FixtureSseTransport::new(body);
+    let client = MessagesClient::new(transport, provider(), NoAuth);
+    let stream = client
+        .stream_request(request, HeaderMap::new())
+        .await
+        .expect("stream_request should succeed");
+
+    let mut rx = stream.rx_event;
+    let mut found_stop_sequence = false;
+    while let Some(event) = rx.recv().await {
+        if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+            assert_eq!(
+                stop_reason.as_deref(),
+                Some("stop_sequence"),
+                "stop_reason must be stop_sequence"
+            );
+            found_stop_sequence = true;
+        }
+    }
+    assert!(
+        found_stop_sequence,
+        "must find Completed with stop_reason=stop_sequence"
+    );
+    Ok(())
 }
