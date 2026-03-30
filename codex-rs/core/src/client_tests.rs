@@ -392,3 +392,85 @@ fn wire_api_messages_round_trips() {
     let back: WireApi = serde_json::from_str(&serialized).unwrap();
     assert!(matches!(back, WireApi::Messages));
 }
+
+// ── adaptive thinking tests ─────────────────────────────────────────
+
+mod adaptive_thinking_tests {
+    use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+    use serde_json::json;
+
+    #[test]
+    fn thinking_none_effort_returns_none() {
+        assert!(super::super::anthropic_thinking_param(None).is_none());
+    }
+
+    #[test]
+    fn thinking_minimal_returns_none() {
+        assert!(
+            super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::Minimal)).is_none()
+        );
+    }
+
+    #[test]
+    fn thinking_effort_none_variant_returns_none() {
+        assert!(
+            super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::None)).is_none()
+        );
+    }
+
+    #[test]
+    fn thinking_low_returns_adaptive() {
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::Low));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn thinking_medium_returns_adaptive() {
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::Medium));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn thinking_high_returns_adaptive() {
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::High));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn thinking_xhigh_returns_adaptive_not_budget() {
+        // xhigh previously set budget_tokens: 131072, now uses adaptive
+        // to avoid token cost balloon on mechanical turns
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::XHigh));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn adaptive_has_no_budget_tokens() {
+        let result =
+            super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::High)).unwrap();
+        assert!(
+            result.get("budget_tokens").is_none(),
+            "adaptive thinking must not include budget_tokens"
+        );
+    }
+
+    #[test]
+    fn all_active_efforts_produce_identical_adaptive() {
+        // All non-disabled effort levels produce identical adaptive config:
+        // the effort enum no longer maps to different budgets on the Messages wire
+        let efforts = [
+            ReasoningEffortConfig::Low,
+            ReasoningEffortConfig::Medium,
+            ReasoningEffortConfig::High,
+            ReasoningEffortConfig::XHigh,
+        ];
+        let expected = json!({ "type": "adaptive" });
+        for effort in efforts {
+            assert_eq!(
+                super::super::anthropic_thinking_param(Some(effort)),
+                Some(expected.clone()),
+                "effort {effort:?} should produce adaptive thinking"
+            );
+        }
+    }
+}
