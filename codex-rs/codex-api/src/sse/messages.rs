@@ -466,15 +466,11 @@ async fn process_messages_sse(
                     let input = u.input_tokens.unwrap_or(0);
                     let output = u.output_tokens.unwrap_or(0);
                     let cached = u.cache_read_input_tokens.unwrap_or(0);
-                    if let Some(created) = u.cache_creation_input_tokens {
-                        debug!(
-                            cache_creation_input_tokens = created,
-                            "Anthropic cache creation tokens"
-                        );
-                    }
+                    let cache_created = u.cache_creation_input_tokens.unwrap_or(0);
                     TokenUsage {
                         input_tokens: input,
                         cached_input_tokens: cached,
+                        cache_creation_input_tokens: cache_created,
                         output_tokens: output,
                         // Anthropic does not currently expose thinking token counts.
                         reasoning_output_tokens: 0,
@@ -949,6 +945,7 @@ mod tests {
                 assert_eq!(usage.input_tokens, 100);
                 assert_eq!(usage.output_tokens, 42);
                 assert_eq!(usage.cached_input_tokens, 50);
+                assert_eq!(usage.cache_creation_input_tokens, 25);
                 assert_eq!(usage.total_tokens, 192);
                 found_usage = true;
             }
@@ -1230,6 +1227,7 @@ mod tests {
                 let usage = token_usage.as_ref().expect("should have token usage");
                 assert_eq!(usage.input_tokens, 100);
                 assert_eq!(usage.cached_input_tokens, 50);
+                assert_eq!(usage.cache_creation_input_tokens, 25);
                 assert_eq!(usage.output_tokens, 10);
                 // total = input + cached + output = 100 + 50 + 10 = 160
                 assert_eq!(

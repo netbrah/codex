@@ -1633,6 +1633,7 @@ where
                             usage.input_tokens,
                             usage.output_tokens,
                             Some(usage.cached_input_tokens),
+                            Some(usage.cache_creation_input_tokens),
                             Some(usage.reasoning_output_tokens),
                             usage.total_tokens,
                         );
