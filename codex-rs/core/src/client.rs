@@ -1205,7 +1205,6 @@ impl ModelClientSession {
                     system_parts.push(serde_json::json!({
                         "type": "text",
                         "text": prompt.base_instructions.text,
-                        "cache_control": {"type": "ephemeral"}
                     }));
                 }
                 for dev_text in &developer_blocks {
@@ -1213,6 +1212,13 @@ impl ModelClientSession {
                         "type": "text",
                         "text": dev_text
                     }));
+                }
+                // Place cache_control on the LAST system block for optimal prompt
+                // caching. Anthropic caches everything up to the cache_control
+                // breakpoint, so it should be after all static content (base
+                // instructions + developer blocks) that stays the same across turns.
+                if let Some(last) = system_parts.last_mut() {
+                    last["cache_control"] = serde_json::json!({"type": "ephemeral"});
                 }
                 if system_parts.is_empty() {
                     None
@@ -1222,7 +1228,7 @@ impl ModelClientSession {
             };
 
             let model_output_cap = anthropic_max_output_tokens(&model_info.slug);
-            let mut max_tokens: u32 = model_output_cap.min(16384);
+            let mut max_tokens: u32 = model_output_cap;
 
             // Use adaptive thinking: the model decides when and how much to
             // reason per turn, eliminating wasted thinking tokens on mechanical
