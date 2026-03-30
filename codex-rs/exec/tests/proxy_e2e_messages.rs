@@ -17,8 +17,15 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn proxy_base_url() -> String {
-    std::env::var("CODEX_PROXY_BASE_URL")
-        .expect("CODEX_PROXY_BASE_URL must be set (e.g. https://api.anthropic.com/v1)")
+    let url = std::env::var("CODEX_PROXY_BASE_URL")
+        .or_else(|_| std::env::var("ANTHROPIC_BASE_URL"))
+        .expect("CODEX_PROXY_BASE_URL or ANTHROPIC_BASE_URL must be set");
+    // Ensure /v1 suffix — the Messages endpoint appends /messages to base_url
+    if !url.ends_with("/v1") {
+        format!("{}/v1", url.trim_end_matches('/'))
+    } else {
+        url
+    }
 }
 const DEFAULT_MODEL: &str = "claude-sonnet-4.6";
 
