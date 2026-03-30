@@ -6197,3 +6197,246 @@ fn test_tui_notification_method() {
         toml::from_str(toml).expect("deserialize notification_method=\"bel\"");
     assert_eq!(parsed.tui.notification_method, NotificationMethod::Bel);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sampling parameter tests (temperature, top_p, top_k) — W-3 sortie
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn temperature_loads_from_config_toml() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0.0
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.0));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(0.0));
+    Ok(())
+}
+
+#[test]
+fn top_p_loads_from_config_toml() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+top_p = 0.9
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.top_p, Some(0.9));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.top_p, Some(0.9));
+    Ok(())
+}
+
+#[test]
+fn top_k_loads_from_config_toml() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+top_k = 40
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.top_k, Some(40));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.top_k, Some(40));
+    Ok(())
+}
+
+#[test]
+fn all_sampling_params_load_together() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0.7
+top_p = 0.95
+top_k = 50
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.7));
+    assert_eq!(cfg.top_p, Some(0.95));
+    assert_eq!(cfg.top_k, Some(50));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(0.7));
+    assert_eq!(config.top_p, Some(0.95));
+    assert_eq!(config.top_k, Some(50));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_default_to_none() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str("").expect("empty TOML should succeed");
+
+    assert_eq!(cfg.temperature, None);
+    assert_eq!(cfg.top_p, None);
+    assert_eq!(cfg.top_k, None);
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, None);
+    assert_eq!(config.top_p, None);
+    assert_eq!(config.top_k, None);
+    Ok(())
+}
+
+#[test]
+fn sampling_params_temperature_zero_is_valid() -> std::io::Result<()> {
+    // temperature=0 is the key use case: deterministic output.
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.0));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(0.0));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_from_profile_override_global() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 1.0
+top_p = 0.5
+top_k = 10
+profile = "code"
+
+[profiles.code]
+temperature = 0.0
+top_p = 0.9
+top_k = 40
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    // Profile values should override global values.
+    assert_eq!(config.temperature, Some(0.0));
+    assert_eq!(config.top_p, Some(0.9));
+    assert_eq!(config.top_k, Some(40));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_profile_partial_override() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 1.0
+top_p = 0.5
+top_k = 10
+profile = "focused"
+
+[profiles.focused]
+temperature = 0.0
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    // Profile temperature overrides global, but top_p and top_k fall through.
+    assert_eq!(config.temperature, Some(0.0));
+    assert_eq!(config.top_p, Some(0.5));
+    assert_eq!(config.top_k, Some(10));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_profile_without_global() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+profile = "creative"
+
+[profiles.creative]
+temperature = 1.5
+top_p = 0.99
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(1.5));
+    assert_eq!(config.top_p, Some(0.99));
+    assert_eq!(config.top_k, None);
+    Ok(())
+}
+
+#[test]
+fn sampling_params_fractional_values() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0.123456
+top_p = 0.000001
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.123456));
+    assert_eq!(cfg.top_p, Some(0.000001));
+    Ok(())
+}
