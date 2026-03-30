@@ -1,9 +1,15 @@
 //! Proxy end-to-end tests for the Anthropic /messages wire protocol.
 //!
-//! Spawns the actual codex binary headless with `--json` against the live
-//! NetApp LiteLLM proxy. Gated behind `CODEX_PROXY_E2E=1`.
+//! Spawns the actual codex binary headless with `--json` against a live
+//! Anthropic-compatible API endpoint. Gated behind `CODEX_PROXY_E2E=1`.
 //!
-//! Run: `CODEX_PROXY_E2E=1 cargo test -p codex-exec --test proxy_e2e_messages -- --test-threads=1`
+//! Required env vars:
+//!   CODEX_PROXY_E2E=1              — enable these tests (skipped by default)
+//!   CODEX_LLM_PROXY_KEY            — API key for the proxy/endpoint
+//!   CODEX_PROXY_BASE_URL           — base URL (e.g. https://api.anthropic.com/v1)
+//!
+//! Run: `CODEX_PROXY_E2E=1 CODEX_PROXY_BASE_URL=https://your-proxy/v1 CODEX_LLM_PROXY_KEY=sk-... \
+//!        cargo test -p codex-exec --test proxy_e2e_messages -- --test-threads=1`
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -12,7 +18,7 @@ use std::process::Command;
 
 fn proxy_base_url() -> String {
     std::env::var("CODEX_PROXY_BASE_URL")
-        .unwrap_or_else(|_| "https://llm-proxy-api.ai.eng.netapp.com/v1".to_string())
+        .expect("CODEX_PROXY_BASE_URL must be set (e.g. https://api.anthropic.com/v1)")
 }
 const DEFAULT_MODEL: &str = "claude-sonnet-4.6";
 
@@ -27,6 +33,14 @@ fn skip_unless_proxy_e2e() -> bool {
         .is_none()
     {
         eprintln!("Skipping proxy-e2e test (CODEX_LLM_PROXY_KEY not set)");
+        return true;
+    }
+    if std::env::var("CODEX_PROXY_BASE_URL")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .is_none()
+    {
+        eprintln!("Skipping proxy-e2e test (CODEX_PROXY_BASE_URL not set)");
         return true;
     }
     false
