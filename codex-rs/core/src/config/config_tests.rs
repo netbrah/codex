@@ -6439,4 +6439,87 @@ top_p = 0.000001
     assert_eq!(cfg.temperature, Some(0.123456));
     assert_eq!(cfg.top_p, Some(0.000001));
     Ok(())
+// ────────────────────────────────────────────────────────────────
+// Sampling config tests
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn parses_sampling_from_config_toml() {
+    let toml = r#"
+[sampling]
+temperature = 0.0
+top_p = 0.95
+top_k = 40
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize sampling");
+    assert_eq!(
+        parsed.sampling,
+        SamplingParams {
+            temperature: Some(0.0),
+            top_p: Some(0.95),
+            top_k: Some(40),
+        }
+    );
+}
+
+#[test]
+fn parses_sampling_with_only_temperature() {
+    let toml = r#"
+[sampling]
+temperature = 0.0
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize sampling");
+    assert_eq!(
+        parsed.sampling,
+        SamplingParams {
+            temperature: Some(0.0),
+            top_p: None,
+            top_k: None,
+        }
+    );
+}
+
+#[test]
+fn missing_sampling_section_defaults_to_empty() {
+    let toml = r#"
+model = "test-model"
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize empty sampling");
+    assert!(parsed.sampling.is_empty());
+}
+
+#[test]
+fn parses_sampling_in_profile() {
+    let toml = r#"
+[profiles.cold]
+model = "claude-sonnet-4.6"
+[profiles.cold.sampling]
+temperature = 0.0
+
+[profiles.warm]
+model = "claude-opus-4.6"
+[profiles.warm.sampling]
+temperature = 0.8
+top_p = 0.95
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize profile sampling");
+    let cold = &parsed.profiles["cold"];
+    assert_eq!(
+        cold.sampling,
+        Some(SamplingParams {
+            temperature: Some(0.0),
+            top_p: None,
+            top_k: None,
+        })
+    );
+
+    let warm = &parsed.profiles["warm"];
+    assert_eq!(
+        warm.sampling,
+        Some(SamplingParams {
+            temperature: Some(0.8),
+            top_p: Some(0.95),
+            top_k: None,
+        })
+    );
 }

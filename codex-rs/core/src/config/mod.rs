@@ -17,6 +17,7 @@ use crate::config::types::OtelConfig;
 use crate::config::types::OtelConfigToml;
 use crate::config::types::OtelExporterKind;
 use crate::config::types::PluginConfig;
+use crate::config::types::SamplingParams;
 use crate::config::types::SandboxWorkspaceWrite;
 use crate::config::types::ShellEnvironmentPolicy;
 use crate::config::types::ShellEnvironmentPolicyToml;
@@ -133,6 +134,7 @@ pub(crate) use permissions::resolve_permission_profile;
 pub use service::ConfigService;
 pub use service::ConfigServiceError;
 pub use types::ApprovalsReviewer;
+pub use types::SamplingParams;
 
 pub use codex_git_utils::GhostSnapshotConfig;
 
@@ -271,6 +273,8 @@ pub struct Config {
     /// Effective service tier preference for new turns (`fast` or `flex`).
     pub service_tier: Option<ServiceTier>,
 
+    /// Sampling parameters (temperature, top_p, top_k) for model requests.
+    pub sampling: SamplingParams,
     /// Model used specifically for review sessions.
     pub review_model: Option<String>,
 
@@ -1337,6 +1341,10 @@ pub struct ConfigToml {
     /// Optional explicit service tier preference for new turns (`fast` or `flex`).
     pub service_tier: Option<ServiceTier>,
 
+    /// Sampling parameters (temperature, top_p, top_k) for model requests.
+    /// Overrides server-side defaults when set.
+    #[serde(default)]
+    pub sampling: SamplingParams,
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,
 
@@ -2443,6 +2451,10 @@ impl Config {
             _ => None,
         };
 
+        let sampling = config_profile
+            .sampling
+            .unwrap_or_default()
+            .merge(cfg.sampling);
         let compact_prompt = compact_prompt.or(cfg.compact_prompt).and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -2604,6 +2616,7 @@ impl Config {
         let config = Self {
             model,
             service_tier,
+            sampling,
             review_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,

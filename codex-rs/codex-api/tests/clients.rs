@@ -397,6 +397,17 @@ fn responses_request_includes_temperature_when_set() {
     let request = ResponsesApiRequest {
         model: "gpt-test".into(),
         instructions: "test".into(),
+// ────────────────────────────────────────────────────────────────
+// Sampling parameters flow through to WebSocket request
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn responses_api_sampling_params_flow_to_ws_request() {
+    use codex_api::ResponseCreateWsRequest;
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
         input: Vec::new(),
         tools: Vec::new(),
         tool_choice: "auto".into(),
@@ -473,6 +484,21 @@ fn responses_ws_request_none_sampling_params_from_api_request() {
     let api_request = ResponsesApiRequest {
         model: "gpt-test".into(),
         instructions: "test".into(),
+        top_p: Some(0.95),
+    };
+
+    let ws_request = ResponseCreateWsRequest::from(&request);
+    assert_eq!(ws_request.temperature, Some(0.0));
+    assert_eq!(ws_request.top_p, Some(0.95));
+}
+
+#[test]
+fn responses_api_none_sampling_params_flow_to_ws_request() {
+    use codex_api::ResponseCreateWsRequest;
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
         input: Vec::new(),
         tools: Vec::new(),
         tool_choice: "auto".into(),
@@ -495,4 +521,8 @@ fn responses_ws_request_none_sampling_params_from_api_request() {
     let json = serde_json::to_value(&ws_request).expect("serialize");
     assert!(json.get("temperature").is_none());
     assert!(json.get("top_p").is_none());
+
+    let ws_request = ResponseCreateWsRequest::from(&request);
+    assert_eq!(ws_request.temperature, None);
+    assert_eq!(ws_request.top_p, None);
 }

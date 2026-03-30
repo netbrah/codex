@@ -63,6 +63,7 @@ use codex_api::response_create_client_metadata;
 use codex_otel::SessionTelemetry;
 use codex_otel::current_span_w3c_trace_context;
 
+use crate::config::SamplingParams;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
@@ -141,9 +142,6 @@ struct ModelClientState {
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     model_verbosity: Option<VerbosityConfig>,
-    temperature: Option<f64>,
-    top_p: Option<f64>,
-    top_k: Option<u32>,
     enable_request_compression: bool,
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
@@ -264,9 +262,6 @@ impl ModelClient {
         provider: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
-        temperature: Option<f64>,
-        top_p: Option<f64>,
-        top_k: Option<u32>,
         enable_request_compression: bool,
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
@@ -283,9 +278,6 @@ impl ModelClient {
                 auth_env_telemetry,
                 session_source,
                 model_verbosity,
-                temperature,
-                top_p,
-                top_k,
                 enable_request_compression,
                 include_timing_metrics,
                 beta_features_header,
@@ -704,6 +696,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
@@ -760,8 +753,8 @@ impl ModelClientSession {
             },
             prompt_cache_key,
             text,
-            temperature: self.client.state.temperature,
-            top_p: self.client.state.top_p,
+            temperature: sampling.temperature,
+            top_p: sampling.top_p,
         };
         Ok(request)
     }
@@ -1022,6 +1015,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
         if let Some(path) = &*CODEX_RS_SSE_FIXTURE {
@@ -1064,6 +1058,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
             )?;
             let client = ApiResponsesClient::new(
                 transport,
@@ -1118,6 +1113,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         _summary: ReasoningSummaryConfig,
         _service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
         let auth_manager = self.client.state.auth_manager.clone();
@@ -1201,9 +1197,9 @@ impl ModelClientSession {
                     None
                 },
                 thinking,
-                temperature: self.client.state.temperature,
-                top_p: self.client.state.top_p,
-                top_k: self.client.state.top_k,
+                temperature: sampling.temperature,
+                top_p: sampling.top_p,
+                top_k: sampling.top_k,
             };
 
             let mut extra_headers = ApiHeaderMap::new();
@@ -1259,6 +1255,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
@@ -1286,6 +1283,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
             )?;
             let mut ws_payload = ResponseCreateWsRequest {
                 client_metadata: response_create_client_metadata(
@@ -1396,6 +1394,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<()> {
         if !self.client.responses_websocket_enabled() {
@@ -1413,6 +1412,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
                 turn_metadata_header,
                 /*warmup*/ true,
                 current_span_w3c_trace_context(),
@@ -1453,6 +1453,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
         let wire_api = self.effective_wire_api(&model_info.slug);
@@ -1468,6 +1469,7 @@ impl ModelClientSession {
                             effort,
                             summary,
                             service_tier,
+                            sampling,
                             turn_metadata_header,
                             /*warmup*/ false,
                             request_trace,
@@ -1488,6 +1490,7 @@ impl ModelClientSession {
                     effort,
                     summary,
                     service_tier,
+                    sampling,
                     turn_metadata_header,
                 )
                 .await
@@ -1500,6 +1503,7 @@ impl ModelClientSession {
                     effort,
                     summary,
                     service_tier,
+                    sampling,
                     turn_metadata_header,
                 )
                 .await

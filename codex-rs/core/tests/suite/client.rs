@@ -8,6 +8,7 @@ use codex_core::ThreadManager;
 use codex_core::WireApi;
 use codex_core::auth::AuthCredentialsStoreMode;
 use codex_core::built_in_model_providers;
+use codex_core::config::SamplingParams;
 use codex_core::default_client::originator;
 use codex_core::error::CodexErr;
 use codex_core::models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -1918,6 +1919,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
             effort,
             summary.unwrap_or(ReasoningSummary::Auto),
             None,
+            SamplingParams::default(),
             None,
         )
         .await

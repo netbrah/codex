@@ -980,3 +980,41 @@ impl Default for ShellEnvironmentPolicy {
 #[cfg(test)]
 #[path = "types_tests.rs"]
 mod tests;
+
+/// Sampling parameters that control the randomness of model output.
+///
+/// These are sent directly to the model API (`temperature`, `top_p`, `top_k`)
+/// and override the model's server-side defaults when set.
+///
+/// - `temperature`: Controls randomness. `0.0` = deterministic, `1.0` = default
+///   server behavior. Supported by both Messages and Responses APIs.
+/// - `top_p`: Nucleus sampling threshold. Only tokens whose cumulative
+///   probability mass is ≤ `top_p` are considered. Supported by both APIs.
+/// - `top_k`: Only the top-k most probable tokens are considered. Anthropic
+///   Messages API only; ignored on the Responses API path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SamplingParams {
+    /// Sampling temperature. `0.0` produces deterministic output.
+    pub temperature: Option<f64>,
+    /// Nucleus sampling threshold (0.0–1.0).
+    pub top_p: Option<f64>,
+    /// Top-k sampling (Anthropic Messages API only).
+    pub top_k: Option<u32>,
+}
+
+impl SamplingParams {
+    /// Returns `true` when no sampling parameter is set.
+    pub fn is_empty(&self) -> bool {
+        self.temperature.is_none() && self.top_p.is_none() && self.top_k.is_none()
+    }
+
+    /// Merges two sets of sampling parameters, preferring values from `self`
+    /// (higher-priority) over `other` (lower-priority).
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            temperature: self.temperature.or(other.temperature),
+            top_p: self.top_p.or(other.top_p),
+            top_k: self.top_k.or(other.top_k),
+        }
+    }
+}

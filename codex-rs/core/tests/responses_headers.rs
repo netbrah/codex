@@ -7,6 +7,7 @@ use codex_core::ModelProviderInfo;
 use codex_core::Prompt;
 use codex_core::ResponseEvent;
 use codex_core::WireApi;
+use codex_core::config::SamplingParams;
 use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
@@ -120,6 +121,7 @@ async fn responses_stream_includes_subagent_header_on_review() {
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -236,6 +238,7 @@ async fn responses_stream_includes_subagent_header_on_other() {
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -351,6 +354,7 @@ async fn responses_respects_model_info_overrides_from_config() {
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
             None,
+            SamplingParams::default(),
             None,
         )
         .await
