@@ -72,6 +72,7 @@ use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ToolChoice;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchConfig;
@@ -522,6 +523,10 @@ pub struct Config {
 
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
+
+    /// Controls how the model selects tools (`auto`, `required`, `none`, or
+    /// `specific` with a tool name).
+    pub tool_choice: Option<ToolChoice>,
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
@@ -1299,6 +1304,10 @@ pub struct ConfigToml {
     pub model_reasoning_summary: Option<ReasoningSummary>,
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
+
+    /// Controls how the model selects tools (`auto`, `required`, `none`, or
+    /// `specific` with a tool name).
+    pub tool_choice: Option<ToolChoice>,
 
     /// Override to force-enable reasoning summaries for the configured model.
     pub model_supports_reasoning_summaries: Option<bool>,
@@ -2669,6 +2678,7 @@ impl Config {
             model_supports_reasoning_summaries: cfg.model_supports_reasoning_summaries,
             model_catalog,
             model_verbosity: config_profile.model_verbosity.or(cfg.model_verbosity),
+            tool_choice: config_profile.tool_choice.or(cfg.tool_choice),
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)

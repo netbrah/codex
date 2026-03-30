@@ -66,6 +66,7 @@ use codex_otel::current_span_w3c_trace_context;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ToolChoice;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
@@ -141,6 +142,7 @@ struct ModelClientState {
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     model_verbosity: Option<VerbosityConfig>,
+    tool_choice: Option<ToolChoice>,
     enable_request_compression: bool,
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
@@ -261,6 +263,7 @@ impl ModelClient {
         provider: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
+        tool_choice: Option<ToolChoice>,
         enable_request_compression: bool,
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
@@ -277,6 +280,7 @@ impl ModelClient {
                 auth_env_telemetry,
                 session_source,
                 model_verbosity,
+                tool_choice,
                 enable_request_compression,
                 include_timing_metrics,
                 beta_features_header,
@@ -687,6 +691,48 @@ impl ModelClientSession {
             .set_connection_reused(/*connection_reused*/ false);
     }
 
+    /// Convert the configured [`ToolChoice`] into the OpenAI Responses API
+    /// `tool_choice` string.
+    ///
+    /// Responses API accepts `"auto"`, `"none"`, or `"required"`.
+    /// For a specific tool it also accepts an object, but the current wire type
+    /// is `String`, so we map `Specific` to `"required"` as the closest
+    /// available semantic (force at least one tool call).
+    fn responses_api_tool_choice(&self) -> String {
+        match self.client.state.tool_choice.as_ref() {
+            None | Some(ToolChoice::Auto) => "auto".to_string(),
+            Some(ToolChoice::Required) | Some(ToolChoice::Specific { .. }) => {
+                "required".to_string()
+            }
+            Some(ToolChoice::None) => "none".to_string(),
+        }
+    }
+
+    /// Convert the configured [`ToolChoice`] into an Anthropic Messages API
+    /// `tool_choice` JSON value.
+    ///
+    /// Messages API accepts `{"type": "auto"}`, `{"type": "any"}`,
+    /// `{"type": "tool", "name": "<name>"}`.
+    /// Note: Anthropic does not support `"none"` via tool_choice — instead the
+    /// caller should omit tools entirely. When `ToolChoice::None` is set we
+    /// still emit `{"type": "auto"}` and rely on the caller to skip the tools
+    /// array (which the existing `has_tools` guard already handles).
+    fn messages_api_tool_choice(&self) -> serde_json::Value {
+        match self.client.state.tool_choice.as_ref() {
+            None | Some(ToolChoice::Auto) => serde_json::json!({"type": "auto"}),
+            Some(ToolChoice::Required) => serde_json::json!({"type": "any"}),
+            Some(ToolChoice::Specific { name }) => {
+                serde_json::json!({"type": "tool", "name": name})
+            }
+            Some(ToolChoice::None) => {
+                // Anthropic doesn't have a "none" tool_choice; the caller
+                // should omit tools. Fall back to "auto" so the request is
+                // still valid if tools happen to be present.
+                serde_json::json!({"type": "auto"})
+            }
+        }
+    }
+
     fn build_responses_request(
         &self,
         provider: &codex_api::Provider,
@@ -738,7 +784,7 @@ impl ModelClientSession {
             instructions: instructions.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
+            tool_choice: self.responses_api_tool_choice(),
             parallel_tool_calls: prompt.parallel_tool_calls,
             reasoning,
             store: provider.is_azure_responses_endpoint(),
@@ -1185,7 +1231,7 @@ impl ModelClientSession {
                     None
                 },
                 tool_choice: if has_tools {
-                    Some(serde_json::json!({"type": "auto"}))
+                    Some(self.messages_api_tool_choice())
                 } else {
                     None
                 },
