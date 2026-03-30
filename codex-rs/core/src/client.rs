@@ -1224,28 +1224,13 @@ impl ModelClientSession {
             let model_output_cap = anthropic_max_output_tokens(&model_info.slug);
             let mut max_tokens: u32 = model_output_cap.min(16384);
 
-            // TODO: Support thinking.type: "adaptive" when ModelInfo gains
-            // an adaptive_thinking capability flag. Adaptive mode is preferred
-            // for Opus 4.6 and available for Sonnet 4.6.
-            let thinking = effort.and_then(|e| {
-                let budget: u32 = match e {
-                    ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal => return None,
-                    ReasoningEffortConfig::Low => 4096,
-                    ReasoningEffortConfig::Medium => 16384,
-                    ReasoningEffortConfig::High => 65536,
-                    ReasoningEffortConfig::XHigh => 131072,
-                };
-                // Anthropic requires max_tokens > budget_tokens because
-                // the thinking budget is allocated FROM max_tokens. The
-                // remaining tokens are available for output text.
-                // Reserve 4096 tokens of headroom for the actual response.
-                let budget = budget.min(model_output_cap.saturating_sub(4096));
+            // Use adaptive thinking: the model decides when and how much to
+            // reason per turn, eliminating wasted thinking tokens on mechanical
+            // turns (tool result acks, simple dispatches).
+            let thinking = anthropic_thinking_param(effort);
+            if thinking.is_some() {
                 max_tokens = model_output_cap;
-                Some(serde_json::json!({
-                    "type": "enabled",
-                    "budget_tokens": budget
-                }))
-            });
+            }
 
             let has_tools = !anthropic_tools.is_empty();
             let metadata = self
@@ -2117,6 +2102,20 @@ impl WebsocketTelemetry for ApiTelemetry {
 /// The check is deliberately conservative: unknown slugs return `false`,
 /// causing an upgrade to the Responses wire which is the safer default
 /// (every LiteLLM / OpenAI-compatible proxy supports `/v1/responses`).
+/// Build the `thinking` parameter for an Anthropic `/messages` request.
+///
+/// Returns `None` when thinking should be disabled (effort is None or Minimal),
+/// otherwise returns `{"type": "adaptive"}` which lets the model self-regulate
+/// reasoning depth per turn.
+fn anthropic_thinking_param(effort: Option<ReasoningEffortConfig>) -> Option<serde_json::Value> {
+    effort.and_then(|e| {
+        if matches!(e, ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal) {
+            return None;
+        }
+        Some(serde_json::json!({ "type": "adaptive" }))
+    })
+}
+
 fn is_anthropic_model(slug: &str) -> bool {
     let s = slug.to_ascii_lowercase();
     // All current Anthropic model slugs contain "claude".

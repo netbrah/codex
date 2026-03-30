@@ -317,3 +317,78 @@ fn test_anthropic_max_output_tokens_real_anthropic_slug() {
         128_000
     );
 }
+
+// ── T-4-B: anthropic_max_output_tokens extended coverage ───────────
+
+#[test]
+fn test_anthropic_max_output_tokens_vertex_aliased_slug() {
+    // Proxy may use vertex_ai/claude-sonnet-4-6 format — doesn't start with "claude"
+    let cap = super::anthropic_max_output_tokens("vertex_ai/claude-sonnet-4-6");
+    assert_eq!(cap, 64_000, "vertex_ai prefix means not starts_with(claude) — gets default");
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_unknown_claude_model() {
+    let cap = super::anthropic_max_output_tokens("claude-unknown-model-999");
+    assert!(
+        cap > 0 && cap <= 200_000,
+        "unknown Claude model should get a sane default: {cap}"
+    );
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_case_insensitive() {
+    assert_eq!(super::anthropic_max_output_tokens("Claude-Opus-4-6"), 128_000);
+    assert_eq!(super::anthropic_max_output_tokens("CLAUDE-HAIKU-3-5"), 8_192);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_non_claude_default() {
+    assert_eq!(super::anthropic_max_output_tokens("gpt-5"), 64_000);
+    assert_eq!(super::anthropic_max_output_tokens("llama-3"), 64_000);
+}
+
+// ── T-1-F: WireApi serde tests (merge regression guard) ────────────
+
+#[test]
+fn wire_api_deserializes_messages() {
+    use crate::model_provider_info::WireApi;
+    let wire_api: WireApi =
+        serde_json::from_str(r#""messages""#).expect("WireApi should deserialize 'messages'");
+    assert!(matches!(wire_api, WireApi::Messages));
+}
+
+#[test]
+fn wire_api_deserializes_responses() {
+    use crate::model_provider_info::WireApi;
+    let wire_api: WireApi = serde_json::from_str(r#""responses""#).unwrap();
+    assert!(matches!(wire_api, WireApi::Responses));
+}
+
+#[test]
+fn wire_api_rejects_unknown() {
+    use crate::model_provider_info::WireApi;
+    let result: Result<WireApi, _> = serde_json::from_str(r#""generateContent""#);
+    assert!(result.is_err(), "unknown wire_api should be rejected");
+}
+
+#[test]
+fn wire_api_rejects_chat_with_error() {
+    use crate::model_provider_info::WireApi;
+    let err = serde_json::from_str::<WireApi>(r#""chat""#).expect_err("'chat' should be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("removed") || msg.contains("chat") || msg.contains("no longer"),
+        "error should explain chat removal: {msg}"
+    );
+}
+
+#[test]
+fn wire_api_messages_round_trips() {
+    use crate::model_provider_info::WireApi;
+    let original = WireApi::Messages;
+    let serialized = serde_json::to_string(&original).unwrap();
+    assert_eq!(serialized, r#""messages""#);
+    let back: WireApi = serde_json::from_str(&serialized).unwrap();
+    assert!(matches!(back, WireApi::Messages));
+}

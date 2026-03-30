@@ -751,3 +751,34 @@ fn split_not_applied_below_min_items_threshold() {
         "test items should be below threshold"
     );
 }
+
+// ── T-9: Compaction path tests (Messages wire stays on /messages) ────
+
+#[test]
+fn compaction_uses_inline_for_messages_wire_provider() {
+    use crate::model_provider_info::WireApi;
+    let provider = crate::model_provider_info::create_oss_provider_with_base_url(
+        "https://proxy.example.com/v1",
+        WireApi::Messages,
+    );
+    let use_remote = super::should_use_remote_compact_task(&provider);
+    assert!(
+        !use_remote,
+        "Messages wire provider should use inline compaction, not remote task"
+    );
+}
+
+#[test]
+fn compaction_uses_remote_for_openai_responses_provider() {
+    use crate::model_provider_info::WireApi;
+    let provider = crate::model_provider_info::create_oss_provider_with_base_url(
+        "https://api.openai.com/v1",
+        WireApi::Responses,
+    );
+    // OSS providers are not is_openai(), so this should be false too
+    let use_remote = super::should_use_remote_compact_task(&provider);
+    assert!(
+        !use_remote,
+        "OSS Responses provider is not OpenAI, should use inline compaction"
+    );
+}

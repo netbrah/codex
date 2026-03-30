@@ -118,9 +118,20 @@ pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<
             } => {
                 let codex_protocol::models::LocalShellAction::Exec(exec) = action;
                 let args = json!({ "command": exec.command.join(" ") });
+                // Generate a synthetic toolu_ ID when call_id is None to prevent
+                // orphaned tool_result entries from empty "id" fields.
+                let id = call_id.clone().unwrap_or_else(|| {
+                    format!("toolu_synthetic_{:016x}", {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        exec.command.hash(&mut h);
+                        messages.len().hash(&mut h);
+                        h.finish()
+                    })
+                });
                 let block = json!({
                     "type": "tool_use",
-                    "id": call_id.clone().unwrap_or_default(),
+                    "id": id,
                     "name": "shell",
                     "input": args,
                 });
@@ -1316,5 +1327,160 @@ mod tests {
                 .unwrap()["signature"],
             "fresh_sig"
         );
+    }
+
+    // ── T-1-G: extract_developer_blocks tests ─────────────────────────
+
+    #[test]
+    fn extract_developer_blocks_returns_text_in_order() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Block A".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "User message".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Block B".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+        let blocks = extract_developer_blocks(&input);
+        assert_eq!(blocks, vec!["Block A", "Block B"]);
+    }
+
+    #[test]
+    fn extract_developer_blocks_ignores_non_developer() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Not a dev block".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "system".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "System".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+        let blocks = extract_developer_blocks(&input);
+        assert!(blocks.is_empty(), "non-developer messages should be ignored");
+    }
+
+    #[test]
+    fn extract_developer_blocks_skips_empty_text() {
+        let input = vec![ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }];
+        let blocks = extract_developer_blocks(&input);
+        assert!(
+            blocks.is_empty(),
+            "empty developer text blocks should be skipped"
+        );
+    }
+
+    #[test]
+    fn extract_developer_blocks_handles_multiple_content_items() {
+        let input = vec![ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![
+                ContentItem::InputText {
+                    text: "Part 1".to_string(),
+                },
+                ContentItem::InputText {
+                    text: "Part 2".to_string(),
+                },
+            ],
+            end_turn: None,
+            phase: None,
+        }];
+        let blocks = extract_developer_blocks(&input);
+        assert_eq!(
+            blocks,
+            vec!["Part 1", "Part 2"],
+            "each text item in a developer message is its own block"
+        );
+    }
+
+    // ── T-1-E: LocalShellCall call_id None → synthetic ID ──────────────
+
+    #[test]
+    fn local_shell_call_none_call_id_produces_nonempty_id() {
+        use codex_protocol::models::LocalShellAction;
+        use codex_protocol::models::LocalShellExecAction;
+        use codex_protocol::models::LocalShellStatus;
+
+        let input = vec![ResponseItem::LocalShellCall {
+            call_id: None,
+            action: LocalShellAction::Exec(LocalShellExecAction {
+                command: vec!["ls".to_string()],
+                timeout_ms: None,
+                working_directory: None,
+                env: None,
+                user: None,
+            }),
+            id: None,
+            status: LocalShellStatus::InProgress,
+        }];
+        let messages = conversation_to_anthropic_messages(&input);
+        let tool_use_id = messages[0]["content"][0]["id"].as_str().unwrap();
+        assert!(
+            !tool_use_id.is_empty(),
+            "tool_use id must not be empty string when call_id is None"
+        );
+    }
+
+    #[test]
+    fn local_shell_call_with_call_id_passes_through() {
+        use codex_protocol::models::LocalShellAction;
+        use codex_protocol::models::LocalShellExecAction;
+        use codex_protocol::models::LocalShellStatus;
+
+        let input = vec![ResponseItem::LocalShellCall {
+            call_id: Some("toolu_abc123".to_string()),
+            action: LocalShellAction::Exec(LocalShellExecAction {
+                command: vec!["echo".to_string(), "hi".to_string()],
+                timeout_ms: None,
+                working_directory: None,
+                env: None,
+                user: None,
+            }),
+            id: None,
+            status: LocalShellStatus::InProgress,
+        }];
+        let messages = conversation_to_anthropic_messages(&input);
+        assert_eq!(messages[0]["content"][0]["id"], "toolu_abc123");
     }
 }
