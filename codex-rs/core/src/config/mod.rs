@@ -523,6 +523,15 @@ pub struct Config {
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
 
+    /// Sampling temperature for model requests.
+    pub temperature: Option<f64>,
+
+    /// Nucleus sampling parameter (top_p).
+    pub top_p: Option<f64>,
+
+    /// Top-k sampling parameter (Anthropic Messages API only).
+    pub top_k: Option<u32>,
+
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
 
@@ -1299,6 +1308,21 @@ pub struct ConfigToml {
     pub model_reasoning_summary: Option<ReasoningSummary>,
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
+
+    /// Sampling temperature for model requests. Lower values (e.g. 0.0) make
+    /// output more deterministic; higher values (e.g. 1.0) make it more
+    /// creative. When unset, the model provider default is used.
+    pub temperature: Option<f64>,
+
+    /// Nucleus sampling parameter. Only tokens whose cumulative probability
+    /// mass is within the top_p fraction are considered. When unset, the model
+    /// provider default is used.
+    pub top_p: Option<f64>,
+
+    /// Top-k sampling parameter (Anthropic Messages API only). Only the top_k
+    /// most probable tokens are considered at each step. When unset, the model
+    /// provider default is used.
+    pub top_k: Option<u32>,
 
     /// Override to force-enable reasoning summaries for the configured model.
     pub model_supports_reasoning_summaries: Option<bool>,
@@ -2669,6 +2693,9 @@ impl Config {
             model_supports_reasoning_summaries: cfg.model_supports_reasoning_summaries,
             model_catalog,
             model_verbosity: config_profile.model_verbosity.or(cfg.model_verbosity),
+            temperature: config_profile.temperature.or(cfg.temperature),
+            top_p: config_profile.top_p.or(cfg.top_p),
+            top_k: config_profile.top_k.or(cfg.top_k),
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)

@@ -171,6 +171,10 @@ pub struct ResponsesApiRequest {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextControls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
 }
 
 impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
@@ -190,6 +194,8 @@ impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
             service_tier: request.service_tier.clone(),
             prompt_cache_key: request.prompt_cache_key.clone(),
             text: request.text.clone(),
+            temperature: request.temperature,
+            top_p: request.top_p,
             generate: None,
             client_metadata: None,
         }
@@ -216,6 +222,10 @@ pub struct ResponseCreateWsRequest {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextControls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generate: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

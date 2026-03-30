@@ -141,6 +141,9 @@ struct ModelClientState {
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     model_verbosity: Option<VerbosityConfig>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    top_k: Option<u32>,
     enable_request_compression: bool,
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
@@ -261,6 +264,9 @@ impl ModelClient {
         provider: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
+        temperature: Option<f64>,
+        top_p: Option<f64>,
+        top_k: Option<u32>,
         enable_request_compression: bool,
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
@@ -277,6 +283,9 @@ impl ModelClient {
                 auth_env_telemetry,
                 session_source,
                 model_verbosity,
+                temperature,
+                top_p,
+                top_k,
                 enable_request_compression,
                 include_timing_metrics,
                 beta_features_header,
@@ -751,6 +760,8 @@ impl ModelClientSession {
             },
             prompt_cache_key,
             text,
+            temperature: self.client.state.temperature,
+            top_p: self.client.state.top_p,
         };
         Ok(request)
     }
@@ -1190,9 +1201,9 @@ impl ModelClientSession {
                     None
                 },
                 thinking,
-                temperature: None,
-                top_p: None,
-                top_k: None,
+                temperature: self.client.state.temperature,
+                top_p: self.client.state.top_p,
+                top_k: self.client.state.top_k,
             };
 
             let mut extra_headers = ApiHeaderMap::new();

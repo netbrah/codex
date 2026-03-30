@@ -33,6 +33,9 @@ pub struct ConfigProfile {
     pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<u32>,
     /// Optional path to a JSON model catalog (applied on startup only).
     pub model_catalog_json: Option<AbsolutePathBuf>,
     pub personality: Option<Personality>,

@@ -378,9 +378,12 @@ async fn messages_proxy_translated_reasoning_deltas_end_to_end() -> Result<()> {
     );
 
     // Verify OutputItemAdded(Reasoning) precedes thinking deltas
-    let reasoning_added_idx = ok_events
-        .iter()
-        .position(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })));
+    let reasoning_added_idx = ok_events.iter().position(|e| {
+        matches!(
+            e,
+            ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })
+        )
+    });
     assert!(
         reasoning_added_idx.is_some(),
         "must emit OutputItemAdded(Reasoning) for thinking block start"
@@ -412,9 +415,9 @@ async fn messages_proxy_translated_reasoning_deltas_end_to_end() -> Result<()> {
             let combined: String = summary
                 .iter()
                 .map(|s| match s {
-                    codex_protocol::models::ReasoningItemReasoningSummary::SummaryText {
-                        text,
-                    } => text.as_str(),
+                    codex_protocol::models::ReasoningItemReasoningSummary::SummaryText { text } => {
+                        text.as_str()
+                    }
                 })
                 .collect();
             assert!(
@@ -486,15 +489,17 @@ async fn messages_no_thinking_no_reasoning_events() -> Result<()> {
         "must NOT emit any reasoning deltas when no thinking block present"
     );
     assert!(
-        !ok_events
-            .iter()
-            .any(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. }))),
+        !ok_events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })
+        )),
         "must NOT emit OutputItemAdded(Reasoning) when no thinking block present"
     );
     assert!(
-        !ok_events
-            .iter()
-            .any(|e| matches!(e, ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. }))),
+        !ok_events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. })
+        )),
         "must NOT emit OutputItemDone(Reasoning) when no thinking block present"
     );
 
@@ -513,4 +518,93 @@ async fn messages_no_thinking_no_reasoning_events() -> Result<()> {
     );
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sampling parameter serialization tests — W-3 sortie
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn messages_request_omits_sampling_params_when_none() {
+    let request = simple_request();
+    let json = serde_json::to_value(&request).expect("serialize");
+    // When None, temperature/top_p/top_k should be omitted entirely
+    // (skip_serializing_if on the struct).
+    assert!(json.get("temperature").is_none());
+    assert!(json.get("top_p").is_none());
+    assert!(json.get("top_k").is_none());
+}
+
+#[test]
+fn messages_request_includes_temperature_when_set() {
+    let request = MessagesApiRequest {
+        temperature: Some(0.0),
+        ..simple_request()
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert_eq!(json["temperature"], serde_json::json!(0.0));
+    // top_p and top_k still omitted
+    assert!(json.get("top_p").is_none());
+    assert!(json.get("top_k").is_none());
+}
+
+#[test]
+fn messages_request_includes_top_p_when_set() {
+    let request = MessagesApiRequest {
+        top_p: Some(0.9),
+        ..simple_request()
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert_eq!(json["top_p"], serde_json::json!(0.9));
+    assert!(json.get("temperature").is_none());
+    assert!(json.get("top_k").is_none());
+}
+
+#[test]
+fn messages_request_includes_top_k_when_set() {
+    let request = MessagesApiRequest {
+        top_k: Some(40),
+        ..simple_request()
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert_eq!(json["top_k"], serde_json::json!(40));
+    assert!(json.get("temperature").is_none());
+    assert!(json.get("top_p").is_none());
+}
+
+#[test]
+fn messages_request_includes_all_sampling_params() {
+    let request = MessagesApiRequest {
+        temperature: Some(0.7),
+        top_p: Some(0.95),
+        top_k: Some(50),
+        ..simple_request()
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert_eq!(json["temperature"], serde_json::json!(0.7));
+    assert_eq!(json["top_p"], serde_json::json!(0.95));
+    assert_eq!(json["top_k"], serde_json::json!(50));
+}
+
+#[test]
+fn messages_request_temperature_zero_serializes_correctly() {
+    // temperature=0 is the critical deterministic-mode use case.
+    let request = MessagesApiRequest {
+        temperature: Some(0.0),
+        ..simple_request()
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    // Must be present and exactly 0.0, not omitted.
+    assert_eq!(json["temperature"], serde_json::json!(0.0));
+}
+
+#[test]
+fn messages_request_top_k_one_serializes_correctly() {
+    // top_k=1 means greedy decoding (only the most likely token).
+    let request = MessagesApiRequest {
+        top_k: Some(1),
+        ..simple_request()
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert_eq!(json["top_k"], serde_json::json!(1));
 }

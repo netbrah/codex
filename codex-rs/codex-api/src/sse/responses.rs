@@ -610,7 +610,8 @@ mod tests {
         match &events[2] {
             Ok(ResponseEvent::Completed {
                 response_id,
-                token_usage, ..
+                token_usage,
+                ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
@@ -712,7 +713,8 @@ mod tests {
         match &events[0] {
             Ok(ResponseEvent::Completed {
                 response_id,
-                token_usage, ..
+                token_usage,
+                ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
