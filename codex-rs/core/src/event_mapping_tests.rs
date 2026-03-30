@@ -349,6 +349,7 @@ fn parses_reasoning_summary_and_raw_content() {
             text: "raw details".to_string(),
         }]),
         encrypted_content: None,
+        raw_wire_block: None,
     };
 
     let turn_item = parse_turn_item(&item).expect("expected reasoning turn item");
@@ -381,6 +382,7 @@ fn parses_reasoning_including_raw_content() {
             },
         ]),
         encrypted_content: None,
+        raw_wire_block: None,
     };
 
     let turn_item = parse_turn_item(&item).expect("expected reasoning turn item");

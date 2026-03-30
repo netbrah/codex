@@ -164,6 +164,7 @@ fn reasoning_msg(text: &str) -> ResponseItem {
             text: text.to_string(),
         }]),
         encrypted_content: None,
+        raw_wire_block: None,
     }
 }
 
@@ -175,6 +176,7 @@ fn reasoning_with_encrypted_content(len: usize) -> ResponseItem {
         }],
         content: None,
         encrypted_content: Some("a".repeat(len)),
+        raw_wire_block: None,
     }
 }
 
@@ -221,6 +223,7 @@ fn filters_non_api_messages() {
                     text: "thinking...".to_string(),
                 }]),
                 encrypted_content: None,
+                raw_wire_block: None,
             },
             ResponseItem::Message {
                 id: None,

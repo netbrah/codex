@@ -206,6 +206,7 @@ async fn process_messages_sse(
                                     summary: Vec::new(),
                                     content: None,
                                     encrypted_content: None,
+                                    raw_wire_block: None,
                                 };
                                 if tx_event
                                     .send(Ok(ResponseEvent::OutputItemAdded(item)))
@@ -379,6 +380,21 @@ async fn process_messages_sse(
                             thinking,
                             signature,
                         }) => {
+                            // Build the raw wire block for byte-identical replay.
+                            // This is the exact JSON block Anthropic expects when
+                            // the conversation history is sent back.
+                            let raw_block = if signature.is_empty() {
+                                serde_json::json!({
+                                    "type": "thinking",
+                                    "thinking": &thinking,
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "type": "thinking",
+                                    "thinking": &thinking,
+                                    "signature": &signature,
+                                })
+                            };
                             let item = ResponseItem::Reasoning {
                                 id: String::new(),
                                 summary: vec![
@@ -392,6 +408,7 @@ async fn process_messages_sse(
                                 } else {
                                     Some(signature)
                                 },
+                                raw_wire_block: Some(raw_block),
                             };
                             if tx_event
                                 .send(Ok(ResponseEvent::OutputItemDone(item)))
@@ -402,6 +419,11 @@ async fn process_messages_sse(
                             }
                         }
                         Some(BlockState::RedactedThinking { data }) => {
+                            // Build raw wire block for byte-identical replay.
+                            let raw_block = serde_json::json!({
+                                "type": "redacted_thinking",
+                                "data": &data,
+                            });
                             // Sentinel prefix "\0REDACTED\0" distinguishes redacted thinking
                             // from real Anthropic signatures (which are base64 and cannot
                             // contain null bytes). Consumed by messages_wire.rs translator.
@@ -410,6 +432,7 @@ async fn process_messages_sse(
                                 summary: Vec::new(),
                                 content: None,
                                 encrypted_content: Some(format!("\0REDACTED\0{data}")),
+                                raw_wire_block: Some(raw_block),
                             };
                             if tx_event
                                 .send(Ok(ResponseEvent::OutputItemDone(item)))

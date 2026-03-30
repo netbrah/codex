@@ -5849,6 +5849,35 @@ pub(crate) async fn run_turn(
                 }
 
                 if !needs_follow_up {
+                    // Circuit breaker: detect death spiral of consecutive empty responses.
+                    {
+                        let mut state = sess.state.lock().await;
+                        if sampling_request_last_agent_message.is_none() {
+                            state.consecutive_null_completions += 1;
+                            if state.consecutive_null_completions >= 3 {
+                                let count = state.consecutive_null_completions;
+                                state.consecutive_null_completions = 0;
+                                drop(state);
+                                sess.send_event(
+                                    &turn_context,
+                                    EventMsg::Warning(WarningEvent {
+                                        message: format!(
+                                            "The model produced {count} consecutive empty \
+                                             responses. The conversation context may be too \
+                                             degraded to continue. Please start a new thread \
+                                             (/clear) or try /compact."
+                                        ),
+                                    }),
+                                )
+                                .await;
+                                last_agent_message = None;
+                                break;
+                            }
+                        } else {
+                            state.consecutive_null_completions = 0;
+                        }
+                    }
+
                     last_agent_message = sampling_request_last_agent_message;
                     let stop_hook_permission_mode = match turn_context.approval_policy.value() {
                         AskForApproval::Never => "bypassPermissions",

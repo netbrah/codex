@@ -321,6 +321,16 @@ pub enum ResponseItem {
         #[ts(optional)]
         content: Option<Vec<ReasoningItemContent>>,
         encrypted_content: Option<String>,
+        /// Raw JSON content block as received from the Anthropic /messages wire,
+        /// stored for byte-identical replay. When present, the Messages wire
+        /// translator uses this directly instead of reconstructing from the
+        /// decomposed summary/encrypted_content fields.
+        ///
+        /// This is `None` for Reasoning items from the Responses wire (OpenAI)
+        /// or from older session files that predate this field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        raw_wire_block: Option<serde_json::Value>,
     },
     LocalShellCall {
         /// Legacy id field retained for compatibility with older payloads.
