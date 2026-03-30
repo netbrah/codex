@@ -26,8 +26,6 @@ fn serializes_text_verbosity_when_set() {
         prompt_cache_key: None,
         service_tier: None,
         text: Some(TextControls {
-            temperature: None,
-            top_p: None,
             verbosity: Some(OpenAiVerbosity::Low),
             format: None,
         }),

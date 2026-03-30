@@ -4311,6 +4311,12 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             model_supports_reasoning_summaries: None,
             model_catalog: None,
             model_verbosity: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            tool_choice: None,
+            messages_metadata_user_id: super::resolve_os_username(),
+            sampling: SamplingParams::default(),
             personality: Some(Personality::Pragmatic),
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
             experimental_exec_server_url: None,
@@ -4454,6 +4460,12 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         model_supports_reasoning_summaries: None,
         model_catalog: None,
         model_verbosity: None,
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        tool_choice: None,
+        messages_metadata_user_id: super::resolve_os_username(),
+        sampling: SamplingParams::default(),
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         experimental_exec_server_url: None,
@@ -4595,6 +4607,12 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         model_supports_reasoning_summaries: None,
         model_catalog: None,
         model_verbosity: None,
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        tool_choice: None,
+        messages_metadata_user_id: super::resolve_os_username(),
+        sampling: SamplingParams::default(),
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         experimental_exec_server_url: None,
@@ -4722,6 +4740,12 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         model_supports_reasoning_summaries: None,
         model_catalog: None,
         model_verbosity: Some(Verbosity::High),
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        tool_choice: None,
+        messages_metadata_user_id: super::resolve_os_username(),
+        sampling: SamplingParams::default(),
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         experimental_exec_server_url: None,
@@ -6439,6 +6463,8 @@ top_p = 0.000001
     assert_eq!(cfg.temperature, Some(0.123456));
     assert_eq!(cfg.top_p, Some(0.000001));
     Ok(())
+}
+
 // ────────────────────────────────────────────────────────────────
 // Sampling config tests
 // ────────────────────────────────────────────────────────────────
@@ -6459,6 +6485,9 @@ top_k = 40
             top_p: Some(0.95),
             top_k: Some(40),
         }
+    );
+}
+
 // ── tool_choice config tests ──────────────────────────────────────────────
 
 #[test]
@@ -6474,7 +6503,7 @@ type = "auto"
     )
     .unwrap();
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::load_from_file(&config_path).unwrap(),
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
         ConfigOverrides::default(),
         codex_home.path().to_path_buf(),
     )
@@ -6499,6 +6528,10 @@ temperature = 0.0
             top_p: None,
             top_k: None,
         }
+    );
+}
+
+#[test]
 fn tool_choice_required_from_toml() {
     let codex_home = tempdir().unwrap();
     let config_path = codex_home.path().join(CONFIG_TOML_FILE);
@@ -6511,7 +6544,7 @@ type = "required"
     )
     .unwrap();
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::load_from_file(&config_path).unwrap(),
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
         ConfigOverrides::default(),
         codex_home.path().to_path_buf(),
     )
@@ -6566,6 +6599,8 @@ top_p = 0.95
         })
     );
 }
+
+#[test]
 fn tool_choice_none_from_toml() {
     let codex_home = tempdir().unwrap();
     let config_path = codex_home.path().join(CONFIG_TOML_FILE);
@@ -6578,7 +6613,7 @@ type = "none"
     )
     .unwrap();
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::load_from_file(&config_path).unwrap(),
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
         ConfigOverrides::default(),
         codex_home.path().to_path_buf(),
     )
@@ -6603,7 +6638,7 @@ name = "shell"
     )
     .unwrap();
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::load_from_file(&config_path).unwrap(),
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
         ConfigOverrides::default(),
         codex_home.path().to_path_buf(),
     )
@@ -6622,7 +6657,7 @@ fn tool_choice_absent_from_toml_yields_none() {
     let config_path = codex_home.path().join(CONFIG_TOML_FILE);
     std::fs::write(&config_path, "").unwrap();
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::load_from_file(&config_path).unwrap(),
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
         ConfigOverrides::default(),
         codex_home.path().to_path_buf(),
     )
@@ -6650,7 +6685,7 @@ type = "required"
     )
     .unwrap();
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::load_from_file(&config_path).unwrap(),
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
         ConfigOverrides::default(),
         codex_home.path().to_path_buf(),
     )
@@ -6678,7 +6713,7 @@ type = "required"
     )
     .unwrap();
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::load_from_file(&config_path).unwrap(),
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
         ConfigOverrides::default(),
         codex_home.path().to_path_buf(),
     )

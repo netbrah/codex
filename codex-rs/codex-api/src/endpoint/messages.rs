@@ -100,11 +100,27 @@ impl<T: HttpTransport, A: AuthProvider> MessagesClient<T, A> {
             HeaderValue::from_static("2023-06-01"),
         );
 
-        // Required for extended thinking (interleaved thinking blocks).
-        headers.insert(
-            http::HeaderName::from_static("anthropic-beta"),
-            HeaderValue::from_static("interleaved-thinking-2025-05-14"),
-        );
+        // Build anthropic-beta header dynamically based on features used in
+        // this request.  Only sent when at least one beta feature is active.
+        let mut beta_features: Vec<&str> = Vec::new();
+
+        if request.thinking.is_some() {
+            beta_features.push("interleaved-thinking-2025-05-14");
+        }
+        // Future: add effort beta when effort param is wired
+        // if request.effort.is_some() {
+        //     beta_features.push("effort-2025-11-24");
+        // }
+
+        if !beta_features.is_empty() {
+            headers.insert(
+                http::HeaderName::from_static("anthropic-beta"),
+                beta_features
+                    .join(",")
+                    .parse()
+                    .expect("valid header value"),
+            );
+        }
 
         let stream_response = self
             .session

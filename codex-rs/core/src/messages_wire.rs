@@ -206,6 +206,38 @@ pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<
     messages
 }
 
+
+/// Extracts text content from `developer`-role messages.
+///
+/// Developer-role messages carry AGENTS.md contents, permission directives,
+/// personality config, and other project instructions. In the Anthropic
+/// `/messages` wire format these must be injected into the `system` parameter
+/// rather than appearing in the `messages[]` array.
+///
+/// Returns a `Vec<String>` of developer text blocks in the order they appear
+/// in the conversation. The caller should append them to the `system` array
+/// after `base_instructions`.
+pub(crate) fn extract_developer_blocks(input: &[ResponseItem]) -> Vec<String> {
+    let mut blocks = Vec::new();
+    for item in input {
+        if let ResponseItem::Message { role, content, .. } = item {
+            if role == "developer" {
+                for c in content {
+                    match c {
+                        ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                            if !text.is_empty() {
+                                blocks.push(text.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    blocks
+}
+
 /// Strips `thinking` and `redacted_thinking` content blocks from all assistant
 /// messages except the last one in the array.
 ///

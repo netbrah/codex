@@ -572,17 +572,47 @@
         "plan_mode_reasoning_effort": {
           "$ref": "#/definitions/ReasoningEffort"
         },
+        "sampling": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SamplingParams"
+            }
+          ],
+          "default": null,
+          "description": "Sampling parameters (temperature, top_p, top_k) for model requests."
+        },
         "sandbox_mode": {
           "$ref": "#/definitions/SandboxMode"
         },
         "service_tier": {
           "$ref": "#/definitions/ServiceTier"
         },
+        "temperature": {
+          "format": "double",
+          "type": "number"
+        },
+        "tool_choice": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ToolChoice"
+            }
+          ],
+          "description": "Controls how the model selects tools (`auto`, `required`, `none`, or `specific` with a tool name)."
+        },
         "tools": {
           "$ref": "#/definitions/ToolsToml"
         },
         "tools_view_image": {
           "type": "boolean"
+        },
+        "top_k": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "top_p": {
+          "format": "double",
+          "type": "number"
         },
         "web_search": {
           "$ref": "#/definitions/WebSearchMode"
@@ -1417,6 +1447,28 @@
         }
       ]
     },
+    "SamplingParams": {
+      "description": "Sampling parameters that control the randomness of model output.\n\nThese are sent directly to the model API (`temperature`, `top_p`, `top_k`) and override the model's server-side defaults when set.\n\n- `temperature`: Controls randomness. `0.0` = deterministic, `1.0` = default server behavior. Supported by both Messages and Responses APIs. - `top_p`: Nucleus sampling threshold. Only tokens whose cumulative probability mass is ≤ `top_p` are considered. Supported by both APIs. - `top_k`: Only the top-k most probable tokens are considered. Anthropic Messages API only; ignored on the Responses API path.",
+      "properties": {
+        "temperature": {
+          "description": "Sampling temperature. `0.0` produces deterministic output.",
+          "format": "double",
+          "type": "number"
+        },
+        "top_k": {
+          "description": "Top-k sampling (Anthropic Messages API only).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "top_p": {
+          "description": "Nucleus sampling threshold (0.0–1.0).",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SandboxMode": {
       "enum": [
         "read-only",
@@ -1556,6 +1608,76 @@
         }
       },
       "type": "object"
+    },
+    "ToolChoice": {
+      "description": "Controls how the model selects tools during a turn.\n\n- `Auto` (default): the model decides whether to call a tool. - `Required`: the model must call at least one tool (Anthropic `any` / OpenAI `required`). - `None`: the model must not call any tools — forced pure-text synthesis. - `Specific { name }`: the model must call the named tool.",
+      "oneOf": [
+        {
+          "description": "Let the model decide whether to use tools.",
+          "properties": {
+            "type": {
+              "enum": [
+                "auto"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Force the model to call at least one tool.",
+          "properties": {
+            "type": {
+              "enum": [
+                "required"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Prevent the model from calling any tools.",
+          "properties": {
+            "type": {
+              "enum": [
+                "none"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Force the model to call a specific tool by name.",
+          "properties": {
+            "name": {
+              "description": "The name of the tool the model must call.",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "specific"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "ToolSuggestConfig": {
       "additionalProperties": false,
@@ -2253,6 +2375,10 @@
       ],
       "description": "Memories subsystem settings."
     },
+    "messages_metadata_user_id": {
+      "description": "User identifier sent in the `metadata.user_id` field of Anthropic Messages API requests. Used for attribution, audit logging, and per-user telemetry at the provider level. Defaults to the OS username when unset.",
+      "type": "string"
+    },
     "model": {
       "description": "Optional override of model selection.",
       "type": "string"
@@ -2425,6 +2551,19 @@
       "description": "Review model override used by the `/review` feature.",
       "type": "string"
     },
+    "sampling": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/SamplingParams"
+        }
+      ],
+      "default": {
+        "temperature": null,
+        "top_k": null,
+        "top_p": null
+      },
+      "description": "Sampling parameters (temperature, top_p, top_k) for model requests. Overrides server-side defaults when set."
+    },
     "sandbox_mode": {
       "allOf": [
         {
@@ -2488,6 +2627,19 @@
       "description": "Suppress warnings about unstable (under development) features.",
       "type": "boolean"
     },
+    "temperature": {
+      "description": "Sampling temperature for model requests. Lower values (e.g. 0.0) make output more deterministic; higher values (e.g. 1.0) make it more creative. When unset, the model provider default is used.",
+      "format": "double",
+      "type": "number"
+    },
+    "tool_choice": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ToolChoice"
+        }
+      ],
+      "description": "Controls how the model selects tools (`auto`, `required`, `none`, or `specific` with a tool name)."
+    },
     "tool_output_token_limit": {
       "description": "Token budget applied when storing tool/function outputs in the context manager.",
       "format": "uint",
@@ -2509,6 +2661,17 @@
         }
       ],
       "description": "Nested tools section for feature toggles"
+    },
+    "top_k": {
+      "description": "Top-k sampling parameter (Anthropic Messages API only). Only the top_k most probable tokens are considered at each step. When unset, the model provider default is used.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "top_p": {
+      "description": "Nucleus sampling parameter. Only tokens whose cumulative probability mass is within the top_p fraction are considered. When unset, the model provider default is used.",
+      "format": "double",
+      "type": "number"
     },
     "tui": {
       "allOf": [

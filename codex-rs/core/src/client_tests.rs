@@ -21,10 +21,8 @@ fn test_model_client(session_source: SessionSource) -> ModelClient {
         provider,
         session_source,
         None,
-        None,
-        None,
-        None,
         /*tool_choice*/ None,
+        None,
         false,
         false,
         None,
@@ -121,8 +119,13 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
 }
 
 mod tool_choice_tests {
-    use super::*;
+    use super::ModelClient;
+    use super::SessionSource;
+    use super::ThreadId;
+    use super::test_model_info;
     use codex_protocol::config_types::ToolChoice;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     fn client_with_tool_choice(tool_choice: Option<ToolChoice>) -> ModelClient {
         let provider = crate::model_provider_info::create_oss_provider_with_base_url(
@@ -136,6 +139,7 @@ mod tool_choice_tests {
             SessionSource::Cli,
             None,
             tool_choice,
+            None,
             false,
             false,
             None,
@@ -233,9 +237,19 @@ mod tool_choice_tests {
             "https://example.com/v1",
             crate::model_provider_info::WireApi::Responses,
         );
-        let api_provider = codex_api::Provider::Standard {
+        let api_provider = codex_api::Provider {
+            name: "test".to_string(),
             base_url: "https://example.com/v1".to_string(),
-            extra_headers: Default::default(),
+            query_params: None,
+            headers: Default::default(),
+            retry: codex_api::provider::RetryConfig {
+                max_attempts: 1,
+                base_delay: std::time::Duration::from_millis(100),
+                retry_429: false,
+                retry_5xx: false,
+                retry_transport: false,
+            },
+            stream_idle_timeout: std::time::Duration::from_secs(30),
         };
         let client = ModelClient::new(
             None,
@@ -244,6 +258,7 @@ mod tool_choice_tests {
             SessionSource::Cli,
             None,
             Some(ToolChoice::Required),
+            None,
             false,
             false,
             None,
@@ -251,7 +266,7 @@ mod tool_choice_tests {
         let session = client.new_session();
 
         let model_info = test_model_info();
-        let prompt = super::super::client_common::Prompt::default();
+        let prompt = crate::client_common::Prompt::default();
         let request = session
             .build_responses_request(
                 &api_provider,
@@ -260,8 +275,45 @@ mod tool_choice_tests {
                 Option::None,
                 codex_protocol::config_types::ReasoningSummary::Auto,
                 Option::None,
+                crate::config::SamplingParams::default(),
             )
             .expect("build request");
         assert_eq!(request.tool_choice, "required");
     }
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_claude_opus() {
+    assert_eq!(super::anthropic_max_output_tokens("claude-opus-4-6"), 128_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_claude_haiku() {
+    assert_eq!(super::anthropic_max_output_tokens("claude-haiku-3-5"), 8_192);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_claude_sonnet() {
+    assert_eq!(super::anthropic_max_output_tokens("claude-sonnet-4-6"), 64_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_proxy_opus_no_claude_prefix() {
+    // Proxy model names that happen to contain "opus" should NOT get 128K
+    assert_eq!(super::anthropic_max_output_tokens("my-opus-proxy"), 64_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_proxy_opus_with_company() {
+    // Company-namespaced model with "opus" substring should NOT get 128K
+    assert_eq!(super::anthropic_max_output_tokens("company/opus-tuned"), 64_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_real_anthropic_slug() {
+    // Real Anthropic model slug format
+    assert_eq!(
+        super::anthropic_max_output_tokens("claude-3-opus-20240229"),
+        128_000
+    );
 }

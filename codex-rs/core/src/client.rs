@@ -98,11 +98,13 @@ use crate::auth::RefreshTokenError;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
+use crate::config::SamplingParams;
 use crate::default_client::build_reqwest_client;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
 use crate::messages_wire::conversation_to_anthropic_messages;
+use crate::messages_wire::extract_developer_blocks;
 use crate::messages_wire::tools_to_anthropic_format;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
@@ -745,6 +747,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
@@ -801,6 +804,8 @@ impl ModelClientSession {
             },
             prompt_cache_key,
             text,
+            temperature: sampling.temperature,
+            top_p: sampling.top_p,
         };
         Ok(request)
     }
@@ -1061,6 +1066,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
         if let Some(path) = &*CODEX_RS_SSE_FIXTURE {
@@ -1103,6 +1109,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
             )?;
             let client = ApiResponsesClient::new(
                 transport,
@@ -1157,6 +1164,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         _summary: ReasoningSummaryConfig,
         _service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
         let auth_manager = self.client.state.auth_manager.clone();
@@ -1186,14 +1194,31 @@ impl ModelClientSession {
             let messages = conversation_to_anthropic_messages(&input);
             let anthropic_tools = tools_to_anthropic_format(&prompt.tools);
 
-            let system = if prompt.base_instructions.text.is_empty() {
-                None
-            } else {
-                Some(serde_json::json!([{
-                    "type": "text",
-                    "text": prompt.base_instructions.text,
-                    "cache_control": {"type": "ephemeral"}
-                }]))
+            // Build the system parameter: base_instructions + developer-role blocks.
+            // Developer-role messages carry AGENTS.md, permission directives, and
+            // personality config. They must be injected into system[] rather than
+            // messages[] on the Anthropic wire. (BREAK-1 / W-7)
+            let developer_blocks = extract_developer_blocks(&input);
+            let system = {
+                let mut system_parts: Vec<serde_json::Value> = Vec::new();
+                if !prompt.base_instructions.text.is_empty() {
+                    system_parts.push(serde_json::json!({
+                        "type": "text",
+                        "text": prompt.base_instructions.text,
+                        "cache_control": {"type": "ephemeral"}
+                    }));
+                }
+                for dev_text in &developer_blocks {
+                    system_parts.push(serde_json::json!({
+                        "type": "text",
+                        "text": dev_text
+                    }));
+                }
+                if system_parts.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Array(system_parts))
+                }
             };
 
             let model_output_cap = anthropic_max_output_tokens(&model_info.slug);
@@ -1248,9 +1273,9 @@ impl ModelClientSession {
                     None
                 },
                 thinking,
-                temperature: None,
-                top_p: None,
-                top_k: None,
+                temperature: sampling.temperature,
+                top_p: sampling.top_p,
+                top_k: sampling.top_k,
                 stop_sequences: None,
                 metadata,
             };
@@ -1308,6 +1333,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
@@ -1335,6 +1361,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
             )?;
             let mut ws_payload = ResponseCreateWsRequest {
                 client_metadata: response_create_client_metadata(
@@ -1445,6 +1472,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<()> {
         if !self.client.responses_websocket_enabled() {
@@ -1462,6 +1490,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
                 turn_metadata_header,
                 /*warmup*/ true,
                 current_span_w3c_trace_context(),
@@ -1502,6 +1531,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
         let wire_api = self.effective_wire_api(&model_info.slug);
@@ -1517,6 +1547,7 @@ impl ModelClientSession {
                             effort,
                             summary,
                             service_tier,
+                            sampling,
                             turn_metadata_header,
                             /*warmup*/ false,
                             request_trace,
@@ -1537,6 +1568,7 @@ impl ModelClientSession {
                     effort,
                     summary,
                     service_tier,
+                    sampling,
                     turn_metadata_header,
                 )
                 .await
@@ -1549,6 +1581,7 @@ impl ModelClientSession {
                     effort,
                     summary,
                     service_tier,
+                    sampling,
                     turn_metadata_header,
                 )
                 .await
@@ -2092,13 +2125,21 @@ fn is_anthropic_model(slug: &str) -> bool {
 }
 
 fn anthropic_max_output_tokens(slug: &str) -> u32 {
-    if slug.contains("opus") {
-        128_000
-    } else if slug.contains("haiku") {
-        8_192
-    } else {
-        64_000
+    let normalized = slug.to_lowercase();
+    // Only apply Claude-specific caps to actual Claude model slugs.
+    // Proxy/custom model names that happen to contain "opus" or "haiku"
+    // as substrings get the conservative default.
+    if normalized.starts_with("claude") {
+        if normalized.contains("opus") {
+            return 128_000;
+        }
+        if normalized.contains("haiku") {
+            return 8_192;
+        }
+        return 64_000; // sonnet and future claude models
     }
+    // Non-Claude models on /messages wire (e.g. routed via proxy): conservative default
+    64_000
 }
 
 #[cfg(test)]
