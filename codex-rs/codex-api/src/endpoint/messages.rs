@@ -50,6 +50,7 @@ pub struct MessagesApiRequest {
     pub top_k: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<MessagesApiMetadata>,
 }
 

@@ -133,6 +133,7 @@ fn request_with_metadata(metadata: Option<MessagesApiMetadata>) -> MessagesApiRe
         temperature: None,
         top_p: None,
         top_k: None,
+        stop_sequences: None,
         metadata,
     }
 }
@@ -219,6 +220,7 @@ fn request_preserves_all_fields_alongside_metadata() {
         temperature: Some(0.0),
         top_p: Some(0.9),
         top_k: Some(40),
+        stop_sequences: Some(vec!["STOP".to_string()]),
         metadata: Some(MessagesApiMetadata {
             user_id: "palanisd".to_string(),
         }),

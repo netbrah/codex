@@ -609,60 +609,8 @@ fn messages_request_top_k_one_serializes_correctly() {
     };
     let json = serde_json::to_value(&request).expect("serialize");
     assert_eq!(json["top_k"], serde_json::json!(1));
-// ────────────────────────────────────────────────────────────────
-// Sampling parameters serialization tests (Messages API)
-// ────────────────────────────────────────────────────────────────
-
-#[test]
-fn messages_api_request_serializes_temperature() {
-    let req = MessagesApiRequest {
-        model: "claude-sonnet-4.6".to_string(),
-        messages: vec![],
-        max_tokens: 1024,
-        stream: true,
-        system: None,
-        tools: None,
-        tool_choice: None,
-        thinking: None,
-        temperature: Some(0.0),
-        top_p: None,
-        top_k: None,
-    };
-
-    let v = serde_json::to_value(&req).expect("json");
-    assert_eq!(v.get("temperature").and_then(|t| t.as_f64()), Some(0.0));
-    assert!(v.get("top_p").is_none());
-    assert!(v.get("top_k").is_none());
 }
 
-#[test]
-fn messages_api_request_serializes_all_sampling_params() {
-    let req = MessagesApiRequest {
-        model: "claude-sonnet-4.6".to_string(),
-        messages: vec![],
-        max_tokens: 1024,
-        stream: true,
-        system: None,
-        tools: None,
-        tool_choice: None,
-        thinking: None,
-        temperature: Some(0.7),
-        top_p: Some(0.95),
-        top_k: Some(40),
-    };
-
-    let v = serde_json::to_value(&req).expect("json");
-    assert_eq!(v.get("temperature").and_then(|t| t.as_f64()), Some(0.7));
-    assert_eq!(v.get("top_p").and_then(|t| t.as_f64()), Some(0.95));
-    assert_eq!(v.get("top_k").and_then(|t| t.as_u64()), Some(40));
-}
-
-#[test]
-fn messages_api_request_omits_sampling_params_when_none() {
-    let req = MessagesApiRequest {
-        model: "claude-sonnet-4.6".to_string(),
-        messages: vec![],
-        max_tokens: 1024,
 /// Verifies that `stop_sequences` is serialized into the request body and that
 /// the response correctly reports `stop_reason: "stop_sequence"` when the model
 /// halts on one of the configured sequences.
@@ -696,22 +644,8 @@ async fn messages_stop_sequences_end_to_end() -> Result<()> {
         temperature: None,
         top_p: None,
         top_k: None,
-    };
-
-    let v = serde_json::to_value(&req).expect("json");
-    assert!(
-        v.get("temperature").is_none(),
-        "temperature should be omitted when None"
-    );
-    assert!(
-        v.get("top_p").is_none(),
-        "top_p should be omitted when None"
-    );
-    assert!(
-        v.get("top_k").is_none(),
-        "top_k should be omitted when None"
-    );
         stop_sequences: Some(vec!["STOP".to_string(), "</answer>".to_string()]),
+        metadata: None,
     };
 
     // Verify the field serializes correctly.
