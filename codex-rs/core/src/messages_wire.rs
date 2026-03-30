@@ -214,6 +214,28 @@ pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<
     }
 
     strip_thinking_from_non_latest_assistant_messages(&mut messages);
+
+    // S-014: Vertex AI rejects requests ending with role:assistant when the
+    // assistant message contains a tool_use block without a matching tool_result.
+    // This happens when a LocalShellCall is in-flight, after mid-turn compaction,
+    // or when parallel tool execution leaves an unmatched tool_use.
+    // Only guard when the trailing assistant has tool_use content — plain text
+    // assistant endings are valid (Anthropic supports prefill).
+    if let Some(last) = messages.last() {
+        if last["role"].as_str() == Some("assistant") {
+            let has_tool_use = last["content"]
+                .as_array()
+                .map(|arr| arr.iter().any(|b| b["type"] == "tool_use"))
+                .unwrap_or(false);
+            if has_tool_use {
+                messages.push(json!({
+                    "role": "user",
+                    "content": [{"type": "text", "text": "[Awaiting tool result]"}]
+                }));
+            }
+        }
+    }
+
     messages
 }
 
@@ -444,9 +466,11 @@ mod tests {
         ];
 
         let messages = conversation_to_anthropic_messages(&input);
-        assert_eq!(messages.len(), 1);
+        // S-014 guard appends a synthetic user message after trailing tool_use
+        assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(messages[1]["role"], "user"); // synthetic guard
     }
 
     #[test]
@@ -755,7 +779,7 @@ mod tests {
         }];
 
         let messages = conversation_to_anthropic_messages(&input);
-        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.len(), 2); // S-014 guard appends synthetic user
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"][0]["type"], "tool_use");
         assert_eq!(messages[0]["content"][0]["id"], "shell_01");
@@ -822,7 +846,7 @@ mod tests {
         ];
 
         let messages = conversation_to_anthropic_messages(&input);
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 3); // user + assistant(thinking+tool_use) + S-014 guard
         assert_eq!(messages[0]["role"], "user");
 
         let assistant_content = messages[1]["content"].as_array().unwrap();
@@ -835,6 +859,7 @@ mod tests {
             assistant_content[1]["type"], "tool_use",
             "tool_use must come after thinking"
         );
+        assert_eq!(messages[2]["role"], "user"); // S-014 synthetic guard
     }
 
     #[test]
@@ -928,7 +953,7 @@ mod tests {
         }];
 
         let messages = conversation_to_anthropic_messages(&input);
-        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.len(), 2); // assistant + S-014 guard
         assert_eq!(messages[0]["content"][0]["type"], "tool_use");
         assert_eq!(
             messages[0]["content"][0]["input"],
@@ -1482,5 +1507,118 @@ mod tests {
         }];
         let messages = conversation_to_anthropic_messages(&input);
         assert_eq!(messages[0]["content"][0]["id"], "toolu_abc123");
+    }
+
+    // ── S-014: trailing assistant guard ─────────────────────────────────
+
+    #[test]
+    fn trailing_assistant_gets_synthetic_user_message() {
+        // Simulate: assistant tool_use with no matching tool_result yet
+        use codex_protocol::models::LocalShellAction;
+        use codex_protocol::models::LocalShellExecAction;
+        use codex_protocol::models::LocalShellStatus;
+
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "do something".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::LocalShellCall {
+                call_id: Some("toolu_014".to_string()),
+                action: LocalShellAction::Exec(LocalShellExecAction {
+                    command: vec!["ls".to_string()],
+                    timeout_ms: None,
+                    working_directory: None,
+                    env: None,
+                    user: None,
+                }),
+                id: None,
+                status: LocalShellStatus::InProgress,
+            },
+            // No FunctionCallOutput — tool still in-flight
+        ];
+        let messages = conversation_to_anthropic_messages(&input);
+        let last = messages.last().unwrap();
+        assert_eq!(
+            last["role"], "user",
+            "trailing assistant must be followed by synthetic user message"
+        );
+        assert!(
+            last["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_lowercase()
+                .contains("awaiting"),
+            "synthetic message should indicate awaiting tool result"
+        );
+    }
+
+    #[test]
+    fn no_synthetic_user_when_ending_on_user() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "hello".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+        let messages = conversation_to_anthropic_messages(&input);
+        assert_eq!(messages.len(), 1, "no synthetic message needed");
+        assert_eq!(messages[0]["role"], "user");
+    }
+
+    #[test]
+    fn no_synthetic_user_after_tool_result() {
+        use codex_protocol::models::LocalShellAction;
+        use codex_protocol::models::LocalShellExecAction;
+        use codex_protocol::models::LocalShellStatus;
+
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "run ls".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::LocalShellCall {
+                call_id: Some("toolu_pair".to_string()),
+                action: LocalShellAction::Exec(LocalShellExecAction {
+                    command: vec!["ls".to_string()],
+                    timeout_ms: None,
+                    working_directory: None,
+                    env: None,
+                    user: None,
+                }),
+                id: None,
+                status: LocalShellStatus::Completed,
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_pair".to_string(),
+                output: FunctionCallOutputPayload::from_text("file.txt".into()),
+            },
+        ];
+        let messages = conversation_to_anthropic_messages(&input);
+        let last = messages.last().unwrap();
+        assert_eq!(
+            last["role"], "user",
+            "tool_result is role:user — no synthetic needed"
+        );
+        // Should be the actual tool_result, not our synthetic
+        assert!(
+            last["content"][0]["type"] == "tool_result",
+            "last message should be the real tool_result, not synthetic"
+        );
     }
 }
