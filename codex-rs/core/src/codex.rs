@@ -1869,9 +1869,6 @@ impl Session {
                 session_configuration.provider.clone(),
                 session_configuration.session_source.clone(),
                 config.model_verbosity,
-                config.temperature,
-                config.top_p,
-                config.top_k,
                 config.tool_choice.clone(),
                 config.messages_metadata_user_id.clone(),
                 config.features.enabled(Feature::EnableRequestCompression),
@@ -3356,6 +3353,24 @@ impl Session {
         let requested_model_normalized = requested_model.to_ascii_lowercase();
         if server_model_normalized == requested_model_normalized {
             info!("server reported model {server_model} (matches requested model)");
+            return false;
+        }
+
+        // The cyber-safety warning is only meaningful for direct OpenAI /responses
+        // connections where a model mismatch signals a real account-level reroute.
+        // LiteLLM and other proxies always echo their internal backend model name in
+        // the SSE `message_start.model` field rather than the alias the client sent,
+        // so the mismatch is structural and permanent — never a real reroute.
+        // Suppress on any non-OpenAI provider or non-Responses wire to avoid
+        // spamming OpenAI-specific copy on Claude/proxy sessions.
+        if turn_context.provider.wire_api != crate::model_provider_info::WireApi::Responses
+            || !turn_context.provider.is_openai()
+        {
+            info!(
+                requested = %requested_model,
+                server = %server_model,
+                "server model mismatch on proxy/messages provider — suppressing OpenAI-specific cyber warning"
+            );
             return false;
         }
 
