@@ -145,10 +145,10 @@ fn request_with_metadata(metadata: Option<MessagesApiMetadata>) -> MessagesApiRe
 #[test]
 fn metadata_serializes_to_expected_json() {
     let metadata = MessagesApiMetadata {
-        user_id: "palanisd".to_string(),
+        user_id: "test-user".to_string(),
     };
     let json = serde_json::to_value(&metadata).unwrap();
-    assert_eq!(json, json!({"user_id": "palanisd"}));
+    assert_eq!(json, json!({"user_id": "test-user"}));
 }
 
 #[test]
@@ -222,7 +222,7 @@ fn request_preserves_all_fields_alongside_metadata() {
         top_k: Some(40),
         stop_sequences: Some(vec!["STOP".to_string()]),
         metadata: Some(MessagesApiMetadata {
-            user_id: "palanisd".to_string(),
+            user_id: "test-user".to_string(),
         }),
     };
     let json = serde_json::to_value(&request).unwrap();
@@ -238,7 +238,7 @@ fn request_preserves_all_fields_alongside_metadata() {
     assert_eq!(json["temperature"], 0.0);
     assert_eq!(json["top_p"], 0.9);
     assert_eq!(json["top_k"], 40);
-    assert_eq!(json["metadata"]["user_id"], "palanisd");
+    assert_eq!(json["metadata"]["user_id"], "test-user");
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ async fn metadata_flows_through_transport_layer() {
     let client = MessagesClient::new(transport.clone(), test_provider(), NoAuth);
 
     let request = request_with_metadata(Some(MessagesApiMetadata {
-        user_id: "palanisd".to_string(),
+        user_id: "test-user".to_string(),
     }));
     let stream = client
         .stream_request(request, HeaderMap::new())
@@ -266,7 +266,7 @@ async fn metadata_flows_through_transport_layer() {
     let body = transport.captured_body();
     assert_eq!(
         body["metadata"],
-        json!({"user_id": "palanisd"}),
+        json!({"user_id": "test-user"}),
         "metadata.user_id should be in the request body sent to the transport"
     );
 }
