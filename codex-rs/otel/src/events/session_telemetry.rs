@@ -799,6 +799,7 @@ impl SessionTelemetry {
         input_token_count: i64,
         output_token_count: i64,
         cached_token_count: Option<i64>,
+        cache_creation_token_count: Option<i64>,
         reasoning_token_count: Option<i64>,
         tool_token_count: i64,
     ) {
@@ -810,6 +811,7 @@ impl SessionTelemetry {
                 input_token_count = %input_token_count,
                 output_token_count = %output_token_count,
                 cached_token_count = cached_token_count,
+                cache_creation_token_count = cache_creation_token_count,
                 reasoning_token_count = reasoning_token_count,
                 tool_token_count = %tool_token_count,
             },

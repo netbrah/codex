@@ -378,9 +378,12 @@ async fn messages_proxy_translated_reasoning_deltas_end_to_end() -> Result<()> {
     );
 
     // Verify OutputItemAdded(Reasoning) precedes thinking deltas
-    let reasoning_added_idx = ok_events
-        .iter()
-        .position(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })));
+    let reasoning_added_idx = ok_events.iter().position(|e| {
+        matches!(
+            e,
+            ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })
+        )
+    });
     assert!(
         reasoning_added_idx.is_some(),
         "must emit OutputItemAdded(Reasoning) for thinking block start"
@@ -412,9 +415,9 @@ async fn messages_proxy_translated_reasoning_deltas_end_to_end() -> Result<()> {
             let combined: String = summary
                 .iter()
                 .map(|s| match s {
-                    codex_protocol::models::ReasoningItemReasoningSummary::SummaryText {
-                        text,
-                    } => text.as_str(),
+                    codex_protocol::models::ReasoningItemReasoningSummary::SummaryText { text } => {
+                        text.as_str()
+                    }
                 })
                 .collect();
             assert!(
@@ -486,15 +489,17 @@ async fn messages_no_thinking_no_reasoning_events() -> Result<()> {
         "must NOT emit any reasoning deltas when no thinking block present"
     );
     assert!(
-        !ok_events
-            .iter()
-            .any(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. }))),
+        !ok_events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })
+        )),
         "must NOT emit OutputItemAdded(Reasoning) when no thinking block present"
     );
     assert!(
-        !ok_events
-            .iter()
-            .any(|e| matches!(e, ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. }))),
+        !ok_events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. })
+        )),
         "must NOT emit OutputItemDone(Reasoning) when no thinking block present"
     );
 

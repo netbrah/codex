@@ -633,6 +633,7 @@ fn token_usage_from_app_server(
     TokenUsage {
         input_tokens: value.input_tokens,
         cached_input_tokens: value.cached_input_tokens,
+        cache_creation_input_tokens: 0,
         output_tokens: value.output_tokens,
         reasoning_output_tokens: value.reasoning_output_tokens,
         total_tokens: value.total_tokens,
