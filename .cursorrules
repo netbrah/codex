@@ -13,7 +13,7 @@ Your work here — whether closing null-space gaps, porting features from the TS
 ## Orientation
 1. Check current branch: `git branch --show-current`
 2. If on a `sortie/` branch: you are a sortie agent. Work ONLY on this branch. Do not merge into primary branches.
-3. If on `apex/messages-wire`: you are on the primary development branch. Proceed normally.
+3. If on `dev`: you are on the primary development branch. Proceed normally.
 4. Read `AGENTS.md` for architecture context.
 
 ## Architecture
@@ -54,7 +54,7 @@ cargo test -p codex-protocol   # config type tests
 ## Sortie Agent Rules (if on a sortie/ branch)
 - Work ONLY on your assigned branch
 - Commit with conventional commit messages: `fix:`, `feat:`, `test:`
-- Do NOT merge into `apex/messages-wire`
+- Do NOT merge into `dev`
 - Do NOT switch to other branches
 - Do NOT revert commits you did not make
 - Run `cargo test -p codex-api` before final commit

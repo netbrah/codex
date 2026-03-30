@@ -11,7 +11,9 @@ Traditional CLI agents are monolithic: one harness, one wire, one model. XLI bre
 
 The `ResponseItem[]` enum is the **lingua franca**: all wire protocols translate to and from it at a single boundary. This keeps the harness core (tools, sandboxing, multi-agent, skills, guardian) wire-agnostic.
 
-**Tier**: All code on `apex/messages-wire` is PUBLIC (netbrah GitHub). The proprietary layer is just the built binary + deployment configs in `cli-ops/deploy/xli/`.
+**Two tiers**:
+- `dev` branch = PUBLIC tier (netbrah GitHub). All cross-wire implementations. Open-source and upstreamable.
+- `feat/xli-embed-assets` = PROPRIETARY tier (NetApp XLI). A thin veneer on top of dev: deploy scripts, skills, build config. Maximize dev, minimize this layer. NEVER push to public remotes.
 
 ## Mission
 
@@ -21,7 +23,7 @@ Implement all three wire protocols natively in the Codex Rust harness with minim
 
 - **Language**: Rust (workspace of crates under `codex-rs/`)
 - **Internal format**: `ResponseItem` enum — the lingua franca. Single conversion boundary at each wire.
-- **Primary branch**: `apex/messages-wire`
+- **Primary branch**: `dev` (public), `feat/xli-embed-assets` (proprietary)
 - **Upstream**: openai/codex (remote: `upstream`, branch: `main`)
 
 ### Wire Protocol Status
@@ -84,7 +86,7 @@ Active sortie implementations (not the old W-2..W-6 branches which were deleted)
 If you are on a `sortie/` or feature branch, you are a sortie agent:
 - Work ONLY on your assigned branch
 - Commit with conventional commit messages
-- Do NOT merge into `apex/messages-wire` — that is C2's job
+- Do NOT merge into `dev` — that is C2's job
 - Do NOT switch branches
 - Do NOT revert commits from other agents
 - Run `cargo test -p codex-api` before final commit
