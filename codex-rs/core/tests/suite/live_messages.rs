@@ -4,39 +4,60 @@
 //!
 //! `#[ignore]` by default — run locally with:
 //! ```bash
-//! CODEX_LLM_PROXY_KEY=sk-... \
-//! CODEX_PROXY_BASE_URL=https://your-proxy/v1 \
-//!   cargo test --test live_messages -- --ignored
+//!   cargo test --test all -- live_messages --ignored --test-threads=1
 //! ```
 //!
+//! Uses CODEX_LLM_PROXY_KEY/ANTHROPIC_API_KEY and
+//! CODEX_PROXY_BASE_URL/ANTHROPIC_BASE_URL from the environment.
+//!
 //! S-013: Validates that the /messages wire produces real responses via
-//! a Claude-compatible endpoint. Complements the fixture-based unit tests
-//! in codex-api and the headless e2e tests in exec/tests/proxy_e2e_messages.rs.
+//! a Claude-compatible endpoint.
 
-use assert_cmd::prelude::*;
-use predicates::prelude::*;
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
-use std::thread;
+use std::process::Command;
 use tempfile::TempDir;
 
-fn require_proxy_env() -> (String, String) {
-    let key = std::env::var("CODEX_LLM_PROXY_KEY")
-        .expect("CODEX_LLM_PROXY_KEY env var not set — skip running live messages tests");
-    let url = std::env::var("CODEX_PROXY_BASE_URL")
-        .expect("CODEX_PROXY_BASE_URL env var not set — skip running live messages tests");
-    (key, url)
+fn proxy_key() -> String {
+    std::env::var("CODEX_LLM_PROXY_KEY")
+        .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+        .unwrap_or_default()
 }
 
-/// Spawns codex-rs configured for the Messages wire against a live proxy.
-fn run_messages_live(prompt: &str) -> (assert_cmd::assert::Assert, TempDir) {
-    #![expect(clippy::unwrap_used)]
-    let (api_key, base_url) = require_proxy_env();
-    let dir = TempDir::new().unwrap();
+fn proxy_base_url() -> String {
+    let url = std::env::var("CODEX_PROXY_BASE_URL")
+        .or_else(|_| std::env::var("ANTHROPIC_BASE_URL"))
+        .unwrap_or_default();
+    // Ensure /v1 suffix — the Messages endpoint appends /messages to base_url
+    if !url.is_empty() && !url.ends_with("/v1") {
+        format!("{}/v1", url.trim_end_matches('/'))
+    } else {
+        url
+    }
+}
 
-    // Write a config.toml that uses the Messages wire
+fn skip_unless_configured() -> bool {
+    if proxy_key().is_empty() {
+        eprintln!("Skipping live messages test — CODEX_LLM_PROXY_KEY/ANTHROPIC_API_KEY not set");
+        return true;
+    }
+    if proxy_base_url().is_empty() {
+        eprintln!("Skipping live messages test — CODEX_PROXY_BASE_URL/ANTHROPIC_BASE_URL not set");
+        return true;
+    }
+    false
+}
+
+struct RunResult {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_messages_exec(prompt: &str) -> RunResult {
+    #![expect(clippy::unwrap_used)]
+    let dir = TempDir::new().unwrap();
     let codex_home = dir.path().join(".codex");
     std::fs::create_dir_all(&codex_home).unwrap();
+
     let config = format!(
         r#"model = "claude-sonnet-4.6"
 model_provider = "messages-proxy"
@@ -51,117 +72,93 @@ wire_api = "messages"
 [projects."{workdir}"]
 trust_level = "trusted"
 "#,
+        base_url = proxy_base_url(),
         workdir = dir.path().display(),
     );
     std::fs::write(codex_home.join("config.toml"), config).unwrap();
 
-    let mut cmd = Command::new(codex_utils_cargo_bin::cargo_bin("codex-rs").unwrap());
-    cmd.current_dir(dir.path());
-    cmd.env("CODEX_HOME", codex_home.to_str().unwrap());
-    cmd.env("ANTHROPIC_API_KEY", &api_key);
-    cmd.env("CODEX_SANDBOX_NETWORK_DISABLED", "");
+    let binary =
+        codex_utils_cargo_bin::cargo_bin("codex").expect("codex binary not found in target/debug");
 
-    cmd.arg("--allow-no-git-exec")
-        .arg("-v")
-        .arg("--")
-        .arg(prompt);
+    let output = Command::new(&binary)
+        .arg("exec")
+        .arg("--json")
+        .arg("--skip-git-repo-check")
+        .arg(prompt)
+        .env("CODEX_HOME", codex_home.to_str().unwrap())
+        .env("ANTHROPIC_API_KEY", proxy_key())
+        .env("CODEX_SANDBOX_NETWORK_DISABLED", "")
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to spawn codex");
 
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().expect("failed to spawn codex-rs");
-
-    // Send terminating newline so Session::run exits after the first turn.
-    child
-        .stdin
-        .as_mut()
-        .expect("child stdin unavailable")
-        .write_all(b"\n")
-        .expect("failed to write to child stdin");
-
-    fn tee<R: Read + Send + 'static>(
-        mut reader: R,
-        mut writer: impl Write + Send + 'static,
-    ) -> thread::JoinHandle<Vec<u8>> {
-        thread::spawn(move || {
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                match reader.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        writer.write_all(&chunk[..n]).ok();
-                        writer.flush().ok();
-                        buf.extend_from_slice(&chunk[..n]);
-                    }
-                    Err(_) => break,
-                }
-            }
-            buf
-        })
+    RunResult {
+        exit_code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     }
-
-    let stdout_handle = tee(
-        child.stdout.take().expect("child stdout"),
-        std::io::stdout(),
-    );
-    let stderr_handle = tee(
-        child.stderr.take().expect("child stderr"),
-        std::io::stderr(),
-    );
-
-    let status = child.wait().expect("failed to wait on child");
-    let stdout = stdout_handle.join().expect("stdout thread panicked");
-    let stderr = stderr_handle.join().expect("stderr thread panicked");
-
-    let output = std::process::Output {
-        status,
-        stdout,
-        stderr,
-    };
-
-    (output.assert(), dir)
 }
 
-/// Basic smoke test: prompt → response via /messages wire.
 #[ignore]
 #[test]
 fn live_messages_basic_response() {
-    if std::env::var("CODEX_LLM_PROXY_KEY").is_err() {
-        eprintln!("skipping live_messages_basic_response – CODEX_LLM_PROXY_KEY not set");
+    if skip_unless_configured() {
         return;
     }
 
-    let (assert, _dir) = run_messages_live("Reply with exactly the word 'pong' and nothing else.");
-    assert.success().stdout(predicate::str::contains("pong"));
+    let result = run_messages_exec("Reply with exactly the word 'pong' and nothing else.");
+    assert_eq!(
+        result.exit_code, 0,
+        "exit code should be 0\nstderr: {}",
+        result.stderr
+    );
+    // JSONL output should contain an agent_message item with the response
+    assert!(
+        result.stdout.contains("pong"),
+        "response should contain 'pong'\nstdout: {}",
+        result.stdout
+    );
 }
 
-/// Tool call round-trip: model calls shell, gets result, responds.
 #[ignore]
 #[test]
 fn live_messages_shell_tool_call() {
-    if std::env::var("CODEX_LLM_PROXY_KEY").is_err() {
-        eprintln!("skipping live_messages_shell_tool_call – CODEX_LLM_PROXY_KEY not set");
+    if skip_unless_configured() {
         return;
     }
 
-    let (assert, _dir) =
-        run_messages_live("Use the shell tool to run 'echo XLI_MESSAGES_TEST'. Report what it printed.");
-    assert
-        .success()
-        .stdout(predicate::str::contains("XLI_MESSAGES_TEST"));
+    let result = run_messages_exec(
+        "Use the shell tool to run 'echo XLI_LIVE_MSG_TEST'. Report what it printed.",
+    );
+    assert_eq!(
+        result.exit_code, 0,
+        "exit code should be 0\nstderr: {}",
+        result.stderr
+    );
+    assert!(
+        result.stdout.contains("XLI_LIVE_MSG_TEST"),
+        "should contain tool output\nstdout: {}",
+        result.stdout
+    );
 }
 
-/// Verify the binary doesn't crash on the Messages wire with thinking enabled.
 #[ignore]
 #[test]
 fn live_messages_thinking_no_crash() {
-    if std::env::var("CODEX_LLM_PROXY_KEY").is_err() {
-        eprintln!("skipping live_messages_thinking_no_crash – CODEX_LLM_PROXY_KEY not set");
+    if skip_unless_configured() {
         return;
     }
 
-    let (assert, _dir) = run_messages_live("What is 7 * 8? Think step by step. Answer with the number only.");
-    assert.success().stdout(predicate::str::contains("56"));
+    let result =
+        run_messages_exec("What is 7 * 8? Think step by step. Answer with the number only.");
+    assert_eq!(
+        result.exit_code, 0,
+        "exit code should be 0\nstderr: {}",
+        result.stderr
+    );
+    assert!(
+        result.stdout.contains("56"),
+        "should produce correct answer\nstdout: {}",
+        result.stdout
+    );
 }
