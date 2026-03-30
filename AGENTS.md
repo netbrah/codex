@@ -105,21 +105,24 @@ Your FINAL COMMIT message or a `SORTIE-NOTES.md` in the repo root must include:
 - Cross-pollination: [yes/no — does the TS harness (Apex) need this?]
 ```
 
-### Live E2E Testing (required for wire-layer sorties)
+### E2E Testing (required for wire-layer sorties)
 
-If your sortie changes wire behavior (/messages translation, SSE parsing, request construction), you MUST run the live e2e test before marking complete:
+If your sortie changes wire behavior, you MUST run the live e2e tests before marking complete. See "Build & Test" section below for env var setup.
 
 ```bash
-# /responses wire (native — upstream tests)
-OPENAI_API_KEY=$OPENAI_API_KEY cargo test --test live_cli -- --ignored
+cd codex-rs
 
-# /messages wire — NO LIVE TEST EXISTS YET
-# Instead, do a manual evidence ledger test:
-# Send a real request through the proxy and record req/resp in your SORTIE-NOTES.md
-# C2 will add it to the evidence ledger at merge time
+# /messages wire (the novel wire — most sorties touch this):
+CODEX_PROXY_E2E=1 cargo test -p codex-exec --test proxy_e2e_messages -- --test-threads=1
+
+# /responses wire (native — if you touched response path):
+cargo test --test live_cli -- --ignored
+
+# Quick single-test smoke check:
+CODEX_PROXY_E2E=1 cargo test -p codex-exec --test proxy_e2e_messages -- claude_basic_prompt --test-threads=1
 ```
 
-**Known gap**: There is no automated live e2e test for the /messages wire (the novel wire this harness adds). The `live_cli.rs` only tests /responses. Until a /messages live test is created, wire-layer sortie agents must manually validate through the proxy and document the result.
+Tests cover: basic prompts, streaming, JSONL event structure, file read via tool call, shell commands, multi-tool chains, extended thinking. All through the live proxy.
 
 C2 reads these notes at merge time and executes the doc updates (evidence ledger, feature registry, wire audit, KPIs). You focus on code; C2 handles the docs.
 
@@ -133,16 +136,53 @@ If you are re-dispatched on a branch that already has commits (e.g., previous ag
 
 ## Build & Test
 
+All commands run from `codex-rs/` (the Cargo workspace root).
+
+### Required Env Vars
+
+```bash
+# For proxy e2e tests (set in your shell profile):
+export CODEX_LLM_PROXY_KEY="your-proxy-api-key"
+export CODEX_PROXY_BASE_URL="https://llm-proxy-api.ai.eng.netapp.com/v1"
+export OPENAI_API_KEY="$CODEX_LLM_PROXY_KEY"   # live_cli.rs uses this
+```
+
+### Dev Workflow (what to run and when)
+
 ```bash
 cd codex-rs
-cargo build --release -p codex-cli
-cargo test -p codex-api        # messages + responses tests
-cargo test -p codex-protocol   # config type tests
-# codex-core tests need v8 — run outside sandbox
 
-# Cross-compile for Linux
+# 1. BUILD (after code changes — ~30s incremental, ~6m clean)
+cargo build -p codex-cli
+
+# 2. UNIT TESTS (after every change — fast, no network needed)
+cargo test -p codex-api        # /messages + /responses SSE parser tests
+cargo test -p codex-protocol   # config type tests, ToolChoice, SamplingParams
+
+# 3. PROXY E2E — /messages wire (after wire-layer changes — ~10s per test)
+#    Requires: CODEX_PROXY_E2E=1 + CODEX_LLM_PROXY_KEY + CODEX_PROXY_BASE_URL
+CODEX_PROXY_E2E=1 cargo test -p codex-exec --test proxy_e2e_messages -- --test-threads=1
+
+# 4. PROXY E2E — /responses wire (after response-path changes)
+#    Requires: OPENAI_API_KEY
+cargo test --test live_cli -- --ignored
+
+# 5. RELEASE BUILD
+cargo build --release -p codex-cli
+
+# 6. CROSS-COMPILE (for Linux deploy)
 cargo zigbuild --release -p codex-cli --target x86_64-unknown-linux-musl
 ```
+
+### Quick Reference
+
+| What | Command | When | Needs Network |
+|------|---------|------|---------------|
+| Unit tests | `cargo test -p codex-api` | Every change | No |
+| /messages e2e | `CODEX_PROXY_E2E=1 cargo test -p codex-exec --test proxy_e2e_messages -- --test-threads=1` | Wire changes | Yes (proxy) |
+| /responses e2e | `cargo test --test live_cli -- --ignored` | Response path changes | Yes (OpenAI) |
+| Single e2e test | `CODEX_PROXY_E2E=1 cargo test -p codex-exec --test proxy_e2e_messages -- claude_basic_prompt --test-threads=1` | Quick smoke | Yes |
+| Release build | `cargo build --release -p codex-cli` | Before deploy | No |
 
 ## Skills
 
