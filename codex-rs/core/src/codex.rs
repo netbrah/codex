@@ -1872,6 +1872,7 @@ impl Session {
                 config.temperature,
                 config.top_p,
                 config.top_k,
+                config.tool_choice.clone(),
                 config.features.enabled(Feature::EnableRequestCompression),
                 config.features.enabled(Feature::RuntimeMetrics),
                 Self::build_model_client_beta_features_header(config.as_ref()),

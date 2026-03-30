@@ -73,6 +73,7 @@ use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ToolChoice;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchConfig;
@@ -535,6 +536,9 @@ pub struct Config {
 
     /// Top-k sampling parameter (Anthropic Messages API only).
     pub top_k: Option<u32>,
+    /// Controls how the model selects tools (`auto`, `required`, `none`, or
+    /// `specific` with a tool name).
+    pub tool_choice: Option<ToolChoice>,
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
@@ -1327,6 +1331,9 @@ pub struct ConfigToml {
     /// most probable tokens are considered at each step. When unset, the model
     /// provider default is used.
     pub top_k: Option<u32>,
+    /// Controls how the model selects tools (`auto`, `required`, `none`, or
+    /// `specific` with a tool name).
+    pub tool_choice: Option<ToolChoice>,
 
     /// Override to force-enable reasoning summaries for the configured model.
     pub model_supports_reasoning_summaries: Option<bool>,
@@ -2709,6 +2716,7 @@ impl Config {
             temperature: config_profile.temperature.or(cfg.temperature),
             top_p: config_profile.top_p.or(cfg.top_p),
             top_k: config_profile.top_k.or(cfg.top_k),
+            tool_choice: config_profile.tool_choice.or(cfg.tool_choice),
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)

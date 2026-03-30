@@ -1840,6 +1840,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
         None,
         None,
         None,
+        /*tool_choice*/ None,
         false,
         false,
         None,

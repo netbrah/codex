@@ -24,6 +24,7 @@ fn test_model_client(session_source: SessionSource) -> ModelClient {
         None,
         None,
         None,
+        /*tool_choice*/ None,
         false,
         false,
         None,
@@ -117,4 +118,150 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
     assert!(auth_context.retry_after_unauthorized);
     assert_eq!(auth_context.recovery_mode, Some("managed"));
     assert_eq!(auth_context.recovery_phase, Some("refresh_token"));
+}
+
+mod tool_choice_tests {
+    use super::*;
+    use codex_protocol::config_types::ToolChoice;
+
+    fn client_with_tool_choice(tool_choice: Option<ToolChoice>) -> ModelClient {
+        let provider = crate::model_provider_info::create_oss_provider_with_base_url(
+            "https://example.com/v1",
+            crate::model_provider_info::WireApi::Responses,
+        );
+        ModelClient::new(
+            None,
+            ThreadId::new(),
+            provider,
+            SessionSource::Cli,
+            None,
+            tool_choice,
+            false,
+            false,
+            None,
+        )
+    }
+
+    // --- Responses API (OpenAI) tool_choice conversion tests ---
+
+    #[test]
+    fn responses_api_default_none_is_auto() {
+        let client = client_with_tool_choice(None);
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "auto");
+    }
+
+    #[test]
+    fn responses_api_auto() {
+        let client = client_with_tool_choice(Some(ToolChoice::Auto));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "auto");
+    }
+
+    #[test]
+    fn responses_api_required() {
+        let client = client_with_tool_choice(Some(ToolChoice::Required));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "required");
+    }
+
+    #[test]
+    fn responses_api_none() {
+        let client = client_with_tool_choice(Some(ToolChoice::None));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "none");
+    }
+
+    #[test]
+    fn responses_api_specific_maps_to_required() {
+        let client = client_with_tool_choice(Some(ToolChoice::Specific {
+            name: "shell".to_string(),
+        }));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "required");
+    }
+
+    // --- Messages API (Anthropic) tool_choice conversion tests ---
+
+    #[test]
+    fn messages_api_default_none_is_auto() {
+        let client = client_with_tool_choice(None);
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "auto"}));
+    }
+
+    #[test]
+    fn messages_api_auto() {
+        let client = client_with_tool_choice(Some(ToolChoice::Auto));
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "auto"}));
+    }
+
+    #[test]
+    fn messages_api_required_maps_to_any() {
+        let client = client_with_tool_choice(Some(ToolChoice::Required));
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "any"}));
+    }
+
+    #[test]
+    fn messages_api_specific_includes_name() {
+        let client = client_with_tool_choice(Some(ToolChoice::Specific {
+            name: "bash_20250306".to_string(),
+        }));
+        let session = client.new_session();
+        assert_eq!(
+            session.messages_api_tool_choice(),
+            json!({"type": "tool", "name": "bash_20250306"})
+        );
+    }
+
+    #[test]
+    fn messages_api_none_falls_back_to_auto() {
+        // Anthropic doesn't support "none" tool_choice; the caller omits
+        // tools entirely. The method falls back to "auto".
+        let client = client_with_tool_choice(Some(ToolChoice::None));
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "auto"}));
+    }
+
+    // --- Full request building tests ---
+
+    #[test]
+    fn build_responses_request_uses_configured_tool_choice() {
+        let provider = crate::model_provider_info::create_oss_provider_with_base_url(
+            "https://example.com/v1",
+            crate::model_provider_info::WireApi::Responses,
+        );
+        let api_provider = codex_api::Provider::Standard {
+            base_url: "https://example.com/v1".to_string(),
+            extra_headers: Default::default(),
+        };
+        let client = ModelClient::new(
+            None,
+            ThreadId::new(),
+            provider,
+            SessionSource::Cli,
+            None,
+            Some(ToolChoice::Required),
+            false,
+            false,
+            None,
+        );
+        let session = client.new_session();
+
+        let model_info = test_model_info();
+        let prompt = super::super::client_common::Prompt::default();
+        let request = session
+            .build_responses_request(
+                &api_provider,
+                &prompt,
+                &model_info,
+                Option::None,
+                codex_protocol::config_types::ReasoningSummary::Auto,
+                Option::None,
+            )
+            .expect("build request");
+        assert_eq!(request.tool_choice, "required");
+    }
 }

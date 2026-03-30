@@ -6459,6 +6459,29 @@ top_k = 40
             top_p: Some(0.95),
             top_k: Some(40),
         }
+// ── tool_choice config tests ──────────────────────────────────────────────
+
+#[test]
+fn tool_choice_auto_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "auto"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::load_from_file(&config_path).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Auto)
     );
 }
 
@@ -6476,6 +6499,26 @@ temperature = 0.0
             top_p: None,
             top_k: None,
         }
+fn tool_choice_required_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "required"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::load_from_file(&config_path).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Required)
     );
 }
 
@@ -6521,5 +6564,127 @@ top_p = 0.95
             top_p: Some(0.95),
             top_k: None,
         })
+    );
+}
+fn tool_choice_none_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "none"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::load_from_file(&config_path).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::None)
+    );
+}
+
+#[test]
+fn tool_choice_specific_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "specific"
+name = "shell"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::load_from_file(&config_path).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Specific {
+            name: "shell".to_string()
+        })
+    );
+}
+
+#[test]
+fn tool_choice_absent_from_toml_yields_none() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, "").unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::load_from_file(&config_path).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(config.tool_choice, None);
+}
+
+#[test]
+fn tool_choice_profile_overrides_top_level() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+profile = "force"
+
+[tool_choice]
+type = "auto"
+
+[profiles.force]
+
+[profiles.force.tool_choice]
+type = "required"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::load_from_file(&config_path).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Required)
+    );
+}
+
+#[test]
+fn tool_choice_top_level_used_when_profile_omits() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+profile = "minimal"
+
+[tool_choice]
+type = "required"
+
+[profiles.minimal]
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::load_from_file(&config_path).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Required)
     );
 }

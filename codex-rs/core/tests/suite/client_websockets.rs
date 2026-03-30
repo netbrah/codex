@@ -1769,6 +1769,7 @@ async fn websocket_harness_with_provider_options(
         None,
         None,
         None,
+        /*tool_choice*/ None,
         false,
         runtime_metrics_enabled,
         None,
