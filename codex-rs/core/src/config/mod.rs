@@ -523,6 +523,11 @@ pub struct Config {
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
 
+    /// User identifier sent in `metadata.user_id` for Anthropic Messages API
+    /// requests. Resolved from `messages_metadata_user_id` in config or
+    /// defaulted to the OS username.
+    pub messages_metadata_user_id: Option<String>,
+
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
 
@@ -1318,6 +1323,12 @@ pub struct ConfigToml {
 
     /// Base URL override for the built-in `openai` model provider.
     pub openai_base_url: Option<String>,
+
+    /// User identifier sent in the `metadata.user_id` field of Anthropic
+    /// Messages API requests. Used for attribution, audit logging, and
+    /// per-user telemetry at the provider level. Defaults to the OS username
+    /// when unset.
+    pub messages_metadata_user_id: Option<String>,
 
     /// Experimental / do not use. Overrides the URL used when connecting to
     /// a remote exec server.
@@ -2669,6 +2680,7 @@ impl Config {
             model_supports_reasoning_summaries: cfg.model_supports_reasoning_summaries,
             model_catalog,
             model_verbosity: config_profile.model_verbosity.or(cfg.model_verbosity),
+            messages_metadata_user_id: cfg.messages_metadata_user_id.or_else(resolve_os_username),
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
@@ -2900,6 +2912,15 @@ pub fn find_codex_home() -> std::io::Result<PathBuf> {
 /// that the directory exists.
 pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
     Ok(cfg.log_dir.clone())
+}
+
+/// Returns the OS username of the current process, or `None` if it cannot be
+/// determined.
+fn resolve_os_username() -> Option<String> {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]

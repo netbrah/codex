@@ -113,8 +113,8 @@ use crate::tools::spec::create_tools_json_for_responses_api;
 use crate::util::FeedbackRequestTags;
 use crate::util::emit_feedback_auth_recovery_tags;
 use crate::util::emit_feedback_request_tags_with_auth_env;
-use codex_api::MessagesApiRequest;
 use codex_api::MessagesClient as ApiMessagesClient;
+use codex_api::{MessagesApiMetadata, MessagesApiRequest};
 
 pub const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 pub const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
@@ -141,6 +141,8 @@ struct ModelClientState {
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     model_verbosity: Option<VerbosityConfig>,
+    /// User identifier for Anthropic Messages API `metadata.user_id`.
+    messages_metadata_user_id: Option<String>,
     enable_request_compression: bool,
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
@@ -261,6 +263,7 @@ impl ModelClient {
         provider: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
+        messages_metadata_user_id: Option<String>,
         enable_request_compression: bool,
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
@@ -277,6 +280,7 @@ impl ModelClient {
                 auth_env_telemetry,
                 session_source,
                 model_verbosity,
+                messages_metadata_user_id,
                 enable_request_compression,
                 include_timing_metrics,
                 beta_features_header,
@@ -1173,6 +1177,14 @@ impl ModelClientSession {
             });
 
             let has_tools = !anthropic_tools.is_empty();
+            let metadata = self
+                .client
+                .state
+                .messages_metadata_user_id
+                .as_ref()
+                .map(|user_id| MessagesApiMetadata {
+                    user_id: user_id.clone(),
+                });
             let request = MessagesApiRequest {
                 model: model_info.slug.clone(),
                 messages,
@@ -1193,6 +1205,7 @@ impl ModelClientSession {
                 temperature: None,
                 top_p: None,
                 top_k: None,
+                metadata,
             };
 
             let mut extra_headers = ApiHeaderMap::new();
