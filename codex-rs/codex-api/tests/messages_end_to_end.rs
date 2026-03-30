@@ -378,9 +378,12 @@ async fn messages_proxy_translated_reasoning_deltas_end_to_end() -> Result<()> {
     );
 
     // Verify OutputItemAdded(Reasoning) precedes thinking deltas
-    let reasoning_added_idx = ok_events
-        .iter()
-        .position(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })));
+    let reasoning_added_idx = ok_events.iter().position(|e| {
+        matches!(
+            e,
+            ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })
+        )
+    });
     assert!(
         reasoning_added_idx.is_some(),
         "must emit OutputItemAdded(Reasoning) for thinking block start"
@@ -412,9 +415,9 @@ async fn messages_proxy_translated_reasoning_deltas_end_to_end() -> Result<()> {
             let combined: String = summary
                 .iter()
                 .map(|s| match s {
-                    codex_protocol::models::ReasoningItemReasoningSummary::SummaryText {
-                        text,
-                    } => text.as_str(),
+                    codex_protocol::models::ReasoningItemReasoningSummary::SummaryText { text } => {
+                        text.as_str()
+                    }
                 })
                 .collect();
             assert!(
@@ -486,15 +489,17 @@ async fn messages_no_thinking_no_reasoning_events() -> Result<()> {
         "must NOT emit any reasoning deltas when no thinking block present"
     );
     assert!(
-        !ok_events
-            .iter()
-            .any(|e| matches!(e, ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. }))),
+        !ok_events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::OutputItemAdded(ResponseItem::Reasoning { .. })
+        )),
         "must NOT emit OutputItemAdded(Reasoning) when no thinking block present"
     );
     assert!(
-        !ok_events
-            .iter()
-            .any(|e| matches!(e, ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. }))),
+        !ok_events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. })
+        )),
         "must NOT emit OutputItemDone(Reasoning) when no thinking block present"
     );
 
@@ -513,4 +518,83 @@ async fn messages_no_thinking_no_reasoning_events() -> Result<()> {
     );
 
     Ok(())
+}
+
+// ────────────────────────────────────────────────────────────────
+// Sampling parameters serialization tests (Messages API)
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn messages_api_request_serializes_temperature() {
+    let req = MessagesApiRequest {
+        model: "claude-sonnet-4.6".to_string(),
+        messages: vec![],
+        max_tokens: 1024,
+        stream: true,
+        system: None,
+        tools: None,
+        tool_choice: None,
+        thinking: None,
+        temperature: Some(0.0),
+        top_p: None,
+        top_k: None,
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert_eq!(v.get("temperature").and_then(|t| t.as_f64()), Some(0.0));
+    assert!(v.get("top_p").is_none());
+    assert!(v.get("top_k").is_none());
+}
+
+#[test]
+fn messages_api_request_serializes_all_sampling_params() {
+    let req = MessagesApiRequest {
+        model: "claude-sonnet-4.6".to_string(),
+        messages: vec![],
+        max_tokens: 1024,
+        stream: true,
+        system: None,
+        tools: None,
+        tool_choice: None,
+        thinking: None,
+        temperature: Some(0.7),
+        top_p: Some(0.95),
+        top_k: Some(40),
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert_eq!(v.get("temperature").and_then(|t| t.as_f64()), Some(0.7));
+    assert_eq!(v.get("top_p").and_then(|t| t.as_f64()), Some(0.95));
+    assert_eq!(v.get("top_k").and_then(|t| t.as_u64()), Some(40));
+}
+
+#[test]
+fn messages_api_request_omits_sampling_params_when_none() {
+    let req = MessagesApiRequest {
+        model: "claude-sonnet-4.6".to_string(),
+        messages: vec![],
+        max_tokens: 1024,
+        stream: true,
+        system: None,
+        tools: None,
+        tool_choice: None,
+        thinking: None,
+        temperature: None,
+        top_p: None,
+        top_k: None,
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert!(
+        v.get("temperature").is_none(),
+        "temperature should be omitted when None"
+    );
+    assert!(
+        v.get("top_p").is_none(),
+        "top_p should be omitted when None"
+    );
+    assert!(
+        v.get("top_k").is_none(),
+        "top_k should be omitted when None"
+    );
 }

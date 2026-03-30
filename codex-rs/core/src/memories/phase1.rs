@@ -3,6 +3,7 @@ use crate::RolloutRecorder;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::config::Config;
+use crate::config::SamplingParams;
 use crate::config::types::MemoriesConfig;
 use crate::contextual_user_message::is_memory_excluded_contextual_user_fragment;
 use crate::error::CodexErr;
@@ -40,6 +41,7 @@ pub(in crate::memories) struct RequestContext {
     pub(in crate::memories) reasoning_effort: Option<ReasoningEffortConfig>,
     pub(in crate::memories) reasoning_summary: ReasoningSummaryConfig,
     pub(in crate::memories) service_tier: Option<ServiceTier>,
+    pub(in crate::memories) sampling: SamplingParams,
     pub(in crate::memories) turn_metadata_header: Option<String>,
 }
 
@@ -173,6 +175,7 @@ impl RequestContext {
             reasoning_effort: Some(phase_one::REASONING_EFFORT),
             reasoning_summary: turn_context.reasoning_summary,
             service_tier: turn_context.config.service_tier,
+            sampling: turn_context.config.sampling,
         }
     }
 }
@@ -352,6 +355,7 @@ mod job {
                 stage_one_context.reasoning_effort,
                 stage_one_context.reasoning_summary,
                 stage_one_context.service_tier,
+                stage_one_context.sampling,
                 stage_one_context.turn_metadata_header.as_deref(),
             )
             .await?;

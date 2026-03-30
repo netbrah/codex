@@ -268,6 +268,8 @@ async fn streaming_client_retries_on_transport_error() -> Result<()> {
         service_tier: None,
         prompt_cache_key: None,
         text: None,
+        temperature: None,
+        top_p: None,
     };
     let client = ResponsesClient::new(transport.clone(), provider, NoAuth);
 
@@ -310,6 +312,8 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
         service_tier: None,
         prompt_cache_key: None,
         text: None,
+        temperature: None,
+        top_p: None,
     };
 
     let mut extra_headers = HeaderMap::new();
@@ -358,4 +362,62 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
     assert_eq!(input_id, Some("msg_1"));
 
     Ok(())
+}
+
+// ────────────────────────────────────────────────────────────────
+// Sampling parameters flow through to WebSocket request
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn responses_api_sampling_params_flow_to_ws_request() {
+    use codex_api::ResponseCreateWsRequest;
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        temperature: Some(0.0),
+        top_p: Some(0.95),
+    };
+
+    let ws_request = ResponseCreateWsRequest::from(&request);
+    assert_eq!(ws_request.temperature, Some(0.0));
+    assert_eq!(ws_request.top_p, Some(0.95));
+}
+
+#[test]
+fn responses_api_none_sampling_params_flow_to_ws_request() {
+    use codex_api::ResponseCreateWsRequest;
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        temperature: None,
+        top_p: None,
+    };
+
+    let ws_request = ResponseCreateWsRequest::from(&request);
+    assert_eq!(ws_request.temperature, None);
+    assert_eq!(ws_request.top_p, None);
 }

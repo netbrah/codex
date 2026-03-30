@@ -354,3 +354,171 @@ fn deserialize_rejects_inline_bearer_token_field() {
         "unexpected error: {err}"
     );
 }
+
+// ────────────────────────────────────────────────────────────────
+// SamplingParams tests
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn sampling_params_default_is_empty() {
+    let sp = SamplingParams::default();
+    assert_eq!(
+        sp,
+        SamplingParams {
+            temperature: None,
+            top_p: None,
+            top_k: None
+        }
+    );
+    assert!(sp.is_empty());
+}
+
+#[test]
+fn sampling_params_is_empty_returns_false_when_any_field_set() {
+    assert!(
+        !SamplingParams {
+            temperature: Some(0.5),
+            ..Default::default()
+        }
+        .is_empty()
+    );
+    assert!(
+        !SamplingParams {
+            top_p: Some(0.9),
+            ..Default::default()
+        }
+        .is_empty()
+    );
+    assert!(
+        !SamplingParams {
+            top_k: Some(40),
+            ..Default::default()
+        }
+        .is_empty()
+    );
+}
+
+#[test]
+fn sampling_params_merge_prefers_self_over_other() {
+    let high_priority = SamplingParams {
+        temperature: Some(0.0),
+        top_p: None,
+        top_k: Some(10),
+    };
+    let low_priority = SamplingParams {
+        temperature: Some(1.0),
+        top_p: Some(0.95),
+        top_k: Some(50),
+    };
+
+    let merged = high_priority.merge(low_priority);
+    assert_eq!(
+        merged,
+        SamplingParams {
+            temperature: Some(0.0), // from self
+            top_p: Some(0.95),      // from other (self was None)
+            top_k: Some(10),        // from self
+        }
+    );
+}
+
+#[test]
+fn sampling_params_merge_empty_returns_other() {
+    let empty = SamplingParams::default();
+    let other = SamplingParams {
+        temperature: Some(0.7),
+        top_p: Some(0.9),
+        top_k: Some(40),
+    };
+
+    assert_eq!(empty.merge(other), other);
+}
+
+#[test]
+fn sampling_params_merge_with_empty_returns_self() {
+    let sp = SamplingParams {
+        temperature: Some(0.7),
+        top_p: Some(0.9),
+        top_k: Some(40),
+    };
+    let empty = SamplingParams::default();
+
+    assert_eq!(sp.merge(empty), sp);
+}
+
+#[test]
+fn sampling_params_deserializes_from_toml() {
+    let toml_str = r#"
+temperature = 0.0
+top_p = 0.95
+top_k = 40
+"#;
+    let sp: SamplingParams = toml::from_str(toml_str).unwrap();
+    assert_eq!(
+        sp,
+        SamplingParams {
+            temperature: Some(0.0),
+            top_p: Some(0.95),
+            top_k: Some(40),
+        }
+    );
+}
+
+#[test]
+fn sampling_params_deserializes_partial_from_toml() {
+    let toml_str = r#"
+temperature = 0.0
+"#;
+    let sp: SamplingParams = toml::from_str(toml_str).unwrap();
+    assert_eq!(
+        sp,
+        SamplingParams {
+            temperature: Some(0.0),
+            top_p: None,
+            top_k: None,
+        }
+    );
+}
+
+#[test]
+fn sampling_params_deserializes_empty_table_from_toml() {
+    let toml_str = "";
+    let sp: SamplingParams = toml::from_str(toml_str).unwrap();
+    assert_eq!(sp, SamplingParams::default());
+}
+
+#[test]
+fn sampling_params_serializes_to_json() {
+    let sp = SamplingParams {
+        temperature: Some(0.0),
+        top_p: Some(0.95),
+        top_k: Some(40),
+    };
+    let json = serde_json::to_value(&sp).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "temperature": 0.0,
+            "top_p": 0.95,
+            "top_k": 40,
+        })
+    );
+}
+
+#[test]
+fn sampling_params_serializes_none_fields_to_json() {
+    let sp = SamplingParams {
+        temperature: Some(0.0),
+        top_p: None,
+        top_k: None,
+    };
+    let json = serde_json::to_value(&sp).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "temperature": 0.0,
+            "top_p": null,
+            "top_k": null,
+        })
+    );
+}

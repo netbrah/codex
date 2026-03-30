@@ -29,6 +29,8 @@ fn serializes_text_verbosity_when_set() {
             verbosity: Some(OpenAiVerbosity::Low),
             format: None,
         }),
+        temperature: None,
+        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -68,6 +70,8 @@ fn serializes_text_schema_with_strict_format() {
         prompt_cache_key: None,
         service_tier: None,
         text: Some(text_controls),
+        temperature: None,
+        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -105,6 +109,8 @@ fn omits_text_when_not_set() {
         prompt_cache_key: None,
         service_tier: None,
         text: None,
+        temperature: None,
+        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -127,6 +133,8 @@ fn serializes_flex_service_tier_when_set() {
         prompt_cache_key: None,
         service_tier: Some(ServiceTier::Flex.to_string()),
         text: None,
+        temperature: None,
+        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -242,4 +250,83 @@ fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
             ]
         })
     );
+}
+
+// ────────────────────────────────────────────────────────────────
+// Sampling parameters serialization tests (Responses API)
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn serializes_temperature_when_set() {
+    let req = ResponsesApiRequest {
+        model: "gpt-5.1".to_string(),
+        instructions: "i".to_string(),
+        input: vec![],
+        tools: vec![],
+        tool_choice: "auto".to_string(),
+        parallel_tool_calls: true,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: vec![],
+        prompt_cache_key: None,
+        service_tier: None,
+        text: None,
+        temperature: Some(0.0),
+        top_p: None,
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert_eq!(v.get("temperature").and_then(|t| t.as_f64()), Some(0.0));
+    assert!(v.get("top_p").is_none());
+}
+
+#[test]
+fn serializes_top_p_when_set() {
+    let req = ResponsesApiRequest {
+        model: "gpt-5.1".to_string(),
+        instructions: "i".to_string(),
+        input: vec![],
+        tools: vec![],
+        tool_choice: "auto".to_string(),
+        parallel_tool_calls: true,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: vec![],
+        prompt_cache_key: None,
+        service_tier: None,
+        text: None,
+        temperature: None,
+        top_p: Some(0.95),
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert!(v.get("temperature").is_none());
+    assert_eq!(v.get("top_p").and_then(|t| t.as_f64()), Some(0.95));
+}
+
+#[test]
+fn omits_temperature_and_top_p_when_none() {
+    let req = ResponsesApiRequest {
+        model: "gpt-5.1".to_string(),
+        instructions: "i".to_string(),
+        input: vec![],
+        tools: vec![],
+        tool_choice: "auto".to_string(),
+        parallel_tool_calls: true,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: vec![],
+        prompt_cache_key: None,
+        service_tier: None,
+        text: None,
+        temperature: None,
+        top_p: None,
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert!(v.get("temperature").is_none());
+    assert!(v.get("top_p").is_none());
 }

@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::config::ToolsToml;
 use crate::config::types::ApprovalsReviewer;
 use crate::config::types::Personality;
+use crate::config::types::SamplingParams;
 use crate::config::types::WindowsToml;
 use crate::protocol::AskForApproval;
 use codex_features::FeaturesToml;
@@ -23,6 +24,9 @@ use codex_protocol::openai_models::ReasoningEffort;
 pub struct ConfigProfile {
     pub model: Option<String>,
     pub service_tier: Option<ServiceTier>,
+    /// Sampling parameters (temperature, top_p, top_k) for model requests.
+    #[serde(default)]
+    pub sampling: Option<SamplingParams>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.
     pub model_provider: Option<String>,
