@@ -33,6 +33,10 @@ pub(crate) struct SessionState {
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
     granted_permissions: Option<PermissionProfile>,
+    /// Counter for consecutive turns that produced no assistant message.
+    /// Reset on any successful (non-null) completion. Used as circuit breaker
+    /// to detect death spirals where the model repeatedly produces empty responses.
+    pub(crate) consecutive_null_completions: u32,
 }
 
 impl SessionState {
@@ -51,6 +55,7 @@ impl SessionState {
             active_connector_selection: HashSet::new(),
             pending_session_start_source: None,
             granted_permissions: None,
+            consecutive_null_completions: 0,
         }
     }
 

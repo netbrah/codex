@@ -268,6 +268,8 @@ async fn streaming_client_retries_on_transport_error() -> Result<()> {
         service_tier: None,
         prompt_cache_key: None,
         text: None,
+        temperature: None,
+        top_p: None,
     };
     let client = ResponsesClient::new(transport.clone(), provider, NoAuth);
 
@@ -310,6 +312,8 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
         service_tier: None,
         prompt_cache_key: None,
         text: None,
+        temperature: None,
+        top_p: None,
     };
 
     let mut extra_headers = HeaderMap::new();
@@ -358,4 +362,143 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
     assert_eq!(input_id, Some("msg_1"));
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sampling parameter serialization tests for Responses API — W-3 sortie
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn responses_request_omits_sampling_params_when_none() {
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "test".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        temperature: None,
+        top_p: None,
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert!(json.get("temperature").is_none());
+    assert!(json.get("top_p").is_none());
+}
+
+// ────────────────────────────────────────────────────────────────
+// Sampling parameters flow through to WebSocket request
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn responses_api_sampling_params_flow_to_ws_request() {
+    use codex_api::ResponseCreateWsRequest;
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        temperature: Some(0.0),
+        top_p: None,
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert_eq!(json["temperature"], serde_json::json!(0.0));
+    assert!(json.get("top_p").is_none());
+}
+
+#[test]
+fn responses_request_includes_both_sampling_params() {
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "test".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        temperature: Some(0.5),
+        top_p: Some(0.9),
+    };
+    let json = serde_json::to_value(&request).expect("serialize");
+    assert_eq!(json["temperature"], serde_json::json!(0.5));
+    assert_eq!(json["top_p"], serde_json::json!(0.9));
+}
+
+#[test]
+fn responses_ws_request_inherits_sampling_params_from_api_request() {
+    use codex_api::ResponseCreateWsRequest;
+
+    let api_request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "test".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        temperature: Some(0.3),
+        top_p: Some(0.8),
+    };
+    let ws_request = ResponseCreateWsRequest::from(&api_request);
+    assert_eq!(ws_request.temperature, Some(0.3));
+    assert_eq!(ws_request.top_p, Some(0.8));
+}
+
+#[test]
+fn responses_api_none_sampling_params_flow_to_ws_request() {
+    use codex_api::ResponseCreateWsRequest;
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        temperature: None,
+        top_p: None,
+    };
+    let ws_request = ResponseCreateWsRequest::from(&request);
+    assert_eq!(ws_request.temperature, None);
+    assert_eq!(ws_request.top_p, None);
+
+    // Verify they're omitted in serialization
+    let json = serde_json::to_value(&ws_request).expect("serialize");
+    assert!(json.get("temperature").is_none());
+    assert!(json.get("top_p").is_none());
 }

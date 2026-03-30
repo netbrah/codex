@@ -140,6 +140,8 @@ impl From<ResponseCompletedUsage> for TokenUsage {
                 .input_tokens_details
                 .map(|d| d.cached_tokens)
                 .unwrap_or(0),
+            // OpenAI Responses API does not report cache creation tokens.
+            cache_creation_input_tokens: 0,
             output_tokens: val.output_tokens,
             reasoning_output_tokens: val
                 .output_tokens_details
@@ -319,6 +321,7 @@ pub fn process_responses_event(
                 match serde_json::from_value::<ResponseCompleted>(resp_val) {
                     Ok(resp) => {
                         return Ok(Some(ResponseEvent::Completed {
+                            stop_reason: None,
                             response_id: resp.id,
                             token_usage: resp.usage.map(Into::into),
                         }));
@@ -610,6 +613,7 @@ mod tests {
             Ok(ResponseEvent::Completed {
                 response_id,
                 token_usage,
+                ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
@@ -712,6 +716,7 @@ mod tests {
             Ok(ResponseEvent::Completed {
                 response_id,
                 token_usage,
+                ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
@@ -936,7 +941,7 @@ mod tests {
             &events[1],
             ResponseEvent::Completed {
                 response_id,
-                token_usage: None
+                token_usage: None, ..
             } if response_id == "resp-1"
         );
     }
@@ -972,7 +977,7 @@ mod tests {
             &events[2],
             ResponseEvent::Completed {
                 response_id,
-                token_usage: None
+                token_usage: None, ..
             } if response_id == "resp-1"
         );
     }

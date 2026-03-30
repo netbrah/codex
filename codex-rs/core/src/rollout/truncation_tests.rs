@@ -44,6 +44,7 @@ fn truncates_rollout_from_start_before_nth_user_only() {
             }],
             content: None,
             encrypted_content: None,
+            raw_wire_block: None,
         },
         ResponseItem::FunctionCall {
             id: None,

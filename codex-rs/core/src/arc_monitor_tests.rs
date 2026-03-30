@@ -140,6 +140,7 @@ async fn build_arc_monitor_request_includes_relevant_history_and_null_policies()
                 summary: Vec::new(),
                 content: None,
                 encrypted_content: Some("encrypted-old".to_string()),
+                raw_wire_block: None,
             }],
             &turn_context,
         )
@@ -168,6 +169,7 @@ async fn build_arc_monitor_request_includes_relevant_history_and_null_policies()
                 summary: Vec::new(),
                 content: None,
                 encrypted_content: Some("encrypted-latest".to_string()),
+                raw_wire_block: None,
             }],
             &turn_context,
         )

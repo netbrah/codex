@@ -85,6 +85,7 @@ mod js_repl;
 mod json_result;
 mod list_dir;
 mod live_cli;
+mod live_messages;
 mod live_reload;
 mod memories;
 mod model_info_overrides;

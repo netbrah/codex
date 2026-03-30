@@ -46,9 +46,11 @@ async fn emits_warning_when_unstable_features_enabled_via_config() {
         .await
         .expect("spawn conversation");
 
-    let warning = wait_for_event(&conversation, |ev| matches!(ev, EventMsg::Warning(_))).await;
+    let warning = wait_for_event(&conversation, |ev| {
+        matches!(ev, EventMsg::Warning(WarningEvent { message }) if message.contains("Under-development features enabled"))
+    }).await;
     let EventMsg::Warning(WarningEvent { message }) = warning else {
-        panic!("expected warning event");
+        panic!("expected unstable features warning event");
     };
     assert!(message.contains("child_agents_md"));
     assert!(message.contains("Under-development features enabled"));
@@ -88,9 +90,11 @@ async fn suppresses_warning_when_configured() {
         .expect("spawn conversation");
 
     let warning = timeout(
-        Duration::from_millis(150),
-        wait_for_event(&conversation, |ev| matches!(ev, EventMsg::Warning(_))),
+        Duration::from_millis(500),
+        wait_for_event(&conversation, |ev| {
+            matches!(ev, EventMsg::Warning(WarningEvent { message }) if message.contains("Under-development features enabled"))
+        }),
     )
     .await;
-    assert!(warning.is_err());
+    assert!(warning.is_err(), "unstable features warning should be suppressed");
 }

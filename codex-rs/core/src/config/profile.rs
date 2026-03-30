@@ -6,12 +6,14 @@ use serde::Serialize;
 use crate::config::ToolsToml;
 use crate::config::types::ApprovalsReviewer;
 use crate::config::types::Personality;
+use crate::config::types::SamplingParams;
 use crate::config::types::WindowsToml;
 use crate::protocol::AskForApproval;
 use codex_features::FeaturesToml;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ToolChoice;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -23,6 +25,9 @@ use codex_protocol::openai_models::ReasoningEffort;
 pub struct ConfigProfile {
     pub model: Option<String>,
     pub service_tier: Option<ServiceTier>,
+    /// Sampling parameters (temperature, top_p, top_k) for model requests.
+    #[serde(default)]
+    pub sampling: Option<SamplingParams>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.
     pub model_provider: Option<String>,
@@ -33,6 +38,12 @@ pub struct ConfigProfile {
     pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<u32>,
+    /// Controls how the model selects tools (`auto`, `required`, `none`, or
+    /// `specific` with a tool name).
+    pub tool_choice: Option<ToolChoice>,
     /// Optional path to a JSON model catalog (applied on startup only).
     pub model_catalog_json: Option<AbsolutePathBuf>,
     pub personality: Option<Personality>,

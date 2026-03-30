@@ -15,6 +15,10 @@ mod auth_env_telemetry;
 mod client;
 mod client_common;
 pub mod codex;
+mod messages_wire;
+#[cfg(test)]
+#[path = "messages_wire_regression_tests.rs"]
+mod messages_wire_regression_tests;
 mod realtime_context;
 mod realtime_conversation;
 pub use codex::SteerInputError;

@@ -17,6 +17,10 @@ path = "src/lib.rs"
 name = "all"
 path = "tests/all.rs"
 
+[[test]]
+name = "proxy_e2e_messages"
+path = "tests/proxy_e2e_messages.rs"
+
 [lints]
 workspace = true
 

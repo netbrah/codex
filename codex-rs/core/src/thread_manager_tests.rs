@@ -56,6 +56,7 @@ fn truncates_before_requested_user_message() {
             }],
             content: None,
             encrypted_content: None,
+            raw_wire_block: None,
         },
         ResponseItem::FunctionCall {
             id: None,

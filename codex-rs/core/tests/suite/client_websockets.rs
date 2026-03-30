@@ -9,6 +9,7 @@ use codex_core::Prompt;
 use codex_core::ResponseEvent;
 use codex_core::WireApi;
 use codex_core::X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER;
+use codex_core::config::SamplingParams;
 use codex_features::Feature;
 use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
@@ -303,6 +304,7 @@ async fn responses_websocket_request_prewarm_reuses_connection() {
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -384,6 +386,7 @@ async fn responses_websocket_preconnect_is_reused_even_with_header_changes() {
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -422,6 +425,7 @@ async fn responses_websocket_request_prewarm_is_reused_even_with_header_changes(
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -434,6 +438,7 @@ async fn responses_websocket_request_prewarm_is_reused_even_with_header_changes(
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -487,6 +492,7 @@ async fn responses_websocket_prewarm_uses_v2_when_provider_supports_websockets()
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -834,6 +840,7 @@ async fn responses_websocket_emits_reasoning_included_event() {
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -907,6 +914,7 @@ async fn responses_websocket_emits_rate_limit_events() {
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -1487,6 +1495,7 @@ async fn responses_websocket_v2_after_error_uses_full_create_without_previous_re
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -1574,6 +1583,7 @@ async fn responses_websocket_v2_surfaces_terminal_error_without_close_handshake(
             harness.effort,
             harness.summary,
             None,
+            SamplingParams::default(),
             None,
         )
         .await
@@ -1756,6 +1766,8 @@ async fn websocket_harness_with_provider_options(
         provider.clone(),
         SessionSource::Exec,
         config.model_verbosity,
+        /*tool_choice*/ None,
+        config.messages_metadata_user_id.clone(),
         false,
         runtime_metrics_enabled,
         None,
@@ -1805,6 +1817,7 @@ async fn stream_until_complete_with_turn_metadata(
             harness.effort,
             harness.summary,
             service_tier,
+            SamplingParams::default(),
             turn_metadata_header,
         )
         .await

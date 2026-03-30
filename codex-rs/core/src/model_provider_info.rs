@@ -41,12 +41,24 @@ pub enum WireApi {
     /// The Responses API exposed by OpenAI at `/v1/responses`.
     #[default]
     Responses,
+    /// The Anthropic Messages API at `/v1/messages`.
+    Messages,
+}
+
+impl WireApi {
+    /// Whether this wire API supports the reasoning effort parameter.
+    pub fn supports_reasoning_effort(&self) -> bool {
+        match self {
+            Self::Responses | Self::Messages => true,
+        }
+    }
 }
 
 impl fmt::Display for WireApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::Responses => "responses",
+            Self::Messages => "messages",
         };
         f.write_str(value)
     }
@@ -60,8 +72,12 @@ impl<'de> Deserialize<'de> for WireApi {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "responses" => Ok(Self::Responses),
+            "messages" => Ok(Self::Messages),
             "chat" => Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
-            _ => Err(serde::de::Error::unknown_variant(&value, &["responses"])),
+            _ => Err(serde::de::Error::unknown_variant(
+                &value,
+                &["responses", "messages"],
+            )),
         }
     }
 }

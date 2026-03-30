@@ -59,7 +59,24 @@ pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
                 }
 
                 if status == http::StatusCode::BAD_REQUEST {
-                    if body_text
+                    if body_text.contains("thinking")
+                        && body_text.contains("cannot be modified")
+                    {
+                        CodexErr::InvalidRequest(format!(
+                            "Anthropic rejected a thinking block in the conversation history. \
+                             This can happen after long sessions or compaction. \
+                             Try /compact or start a new thread. Original: {body_text}"
+                        ))
+                    } else if body_text.contains("encrypted content")
+                        && body_text.contains("could not be verified")
+                    {
+                        CodexErr::InvalidRequest(format!(
+                            "Encrypted content affinity error — your LLM proxy is routing \
+                             requests to different deployments with different keys. \
+                             Enable 'encrypted_content_affinity' in your LiteLLM \
+                             router_settings. Original: {body_text}"
+                        ))
+                    } else if body_text
                         .contains("The image data you provided does not represent a valid image")
                     {
                         CodexErr::InvalidImageRequest()
@@ -119,7 +136,11 @@ pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
                 CodexErr::Stream(msg, None)
             }
         },
-        ApiError::RateLimit(msg) => CodexErr::Stream(msg, None),
+        ApiError::RateLimit(msg) => {
+            // Map to Stream so the backoff/retry loop in the turn runner
+            // can retry the request after a delay.
+            CodexErr::Stream(msg, None)
+        }
     }
 }
 

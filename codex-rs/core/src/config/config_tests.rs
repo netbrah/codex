@@ -4311,6 +4311,12 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             model_supports_reasoning_summaries: None,
             model_catalog: None,
             model_verbosity: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            tool_choice: None,
+            messages_metadata_user_id: super::resolve_os_username(),
+            sampling: SamplingParams::default(),
             personality: Some(Personality::Pragmatic),
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
             experimental_exec_server_url: None,
@@ -4454,6 +4460,12 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         model_supports_reasoning_summaries: None,
         model_catalog: None,
         model_verbosity: None,
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        tool_choice: None,
+        messages_metadata_user_id: super::resolve_os_username(),
+        sampling: SamplingParams::default(),
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         experimental_exec_server_url: None,
@@ -4595,6 +4607,12 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         model_supports_reasoning_summaries: None,
         model_catalog: None,
         model_verbosity: None,
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        tool_choice: None,
+        messages_metadata_user_id: super::resolve_os_username(),
+        sampling: SamplingParams::default(),
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         experimental_exec_server_url: None,
@@ -4722,6 +4740,12 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         model_supports_reasoning_summaries: None,
         model_catalog: None,
         model_verbosity: Some(Verbosity::High),
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        tool_choice: None,
+        messages_metadata_user_id: super::resolve_os_username(),
+        sampling: SamplingParams::default(),
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         experimental_exec_server_url: None,
@@ -6196,4 +6220,506 @@ fn test_tui_notification_method() {
     let parsed: RootTomlTest =
         toml::from_str(toml).expect("deserialize notification_method=\"bel\"");
     assert_eq!(parsed.tui.notification_method, NotificationMethod::Bel);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sampling parameter tests (temperature, top_p, top_k) — W-3 sortie
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn temperature_loads_from_config_toml() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0.0
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.0));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(0.0));
+    Ok(())
+}
+
+#[test]
+fn top_p_loads_from_config_toml() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+top_p = 0.9
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.top_p, Some(0.9));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.top_p, Some(0.9));
+    Ok(())
+}
+
+#[test]
+fn top_k_loads_from_config_toml() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+top_k = 40
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.top_k, Some(40));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.top_k, Some(40));
+    Ok(())
+}
+
+#[test]
+fn all_sampling_params_load_together() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0.7
+top_p = 0.95
+top_k = 50
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.7));
+    assert_eq!(cfg.top_p, Some(0.95));
+    assert_eq!(cfg.top_k, Some(50));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(0.7));
+    assert_eq!(config.top_p, Some(0.95));
+    assert_eq!(config.top_k, Some(50));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_default_to_none() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str("").expect("empty TOML should succeed");
+
+    assert_eq!(cfg.temperature, None);
+    assert_eq!(cfg.top_p, None);
+    assert_eq!(cfg.top_k, None);
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, None);
+    assert_eq!(config.top_p, None);
+    assert_eq!(config.top_k, None);
+    Ok(())
+}
+
+#[test]
+fn sampling_params_temperature_zero_is_valid() -> std::io::Result<()> {
+    // temperature=0 is the key use case: deterministic output.
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.0));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(0.0));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_from_profile_override_global() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 1.0
+top_p = 0.5
+top_k = 10
+profile = "code"
+
+[profiles.code]
+temperature = 0.0
+top_p = 0.9
+top_k = 40
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    // Profile values should override global values.
+    assert_eq!(config.temperature, Some(0.0));
+    assert_eq!(config.top_p, Some(0.9));
+    assert_eq!(config.top_k, Some(40));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_profile_partial_override() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 1.0
+top_p = 0.5
+top_k = 10
+profile = "focused"
+
+[profiles.focused]
+temperature = 0.0
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    // Profile temperature overrides global, but top_p and top_k fall through.
+    assert_eq!(config.temperature, Some(0.0));
+    assert_eq!(config.top_p, Some(0.5));
+    assert_eq!(config.top_k, Some(10));
+    Ok(())
+}
+
+#[test]
+fn sampling_params_profile_without_global() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+profile = "creative"
+
+[profiles.creative]
+temperature = 1.5
+top_p = 0.99
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(config.temperature, Some(1.5));
+    assert_eq!(config.top_p, Some(0.99));
+    assert_eq!(config.top_k, None);
+    Ok(())
+}
+
+#[test]
+fn sampling_params_fractional_values() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+temperature = 0.123456
+top_p = 0.000001
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.temperature, Some(0.123456));
+    assert_eq!(cfg.top_p, Some(0.000001));
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────────
+// Sampling config tests
+// ────────────────────────────────────────────────────────────────
+
+#[test]
+fn parses_sampling_from_config_toml() {
+    let toml = r#"
+[sampling]
+temperature = 0.0
+top_p = 0.95
+top_k = 40
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize sampling");
+    assert_eq!(
+        parsed.sampling,
+        SamplingParams {
+            temperature: Some(0.0),
+            top_p: Some(0.95),
+            top_k: Some(40),
+        }
+    );
+}
+
+// ── tool_choice config tests ──────────────────────────────────────────────
+
+#[test]
+fn tool_choice_auto_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "auto"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Auto)
+    );
+}
+
+#[test]
+fn parses_sampling_with_only_temperature() {
+    let toml = r#"
+[sampling]
+temperature = 0.0
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize sampling");
+    assert_eq!(
+        parsed.sampling,
+        SamplingParams {
+            temperature: Some(0.0),
+            top_p: None,
+            top_k: None,
+        }
+    );
+}
+
+#[test]
+fn tool_choice_required_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "required"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Required)
+    );
+}
+
+#[test]
+fn missing_sampling_section_defaults_to_empty() {
+    let toml = r#"
+model = "test-model"
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize empty sampling");
+    assert!(parsed.sampling.is_empty());
+}
+
+#[test]
+fn parses_sampling_in_profile() {
+    let toml = r#"
+[profiles.cold]
+model = "claude-sonnet-4.6"
+[profiles.cold.sampling]
+temperature = 0.0
+
+[profiles.warm]
+model = "claude-opus-4.6"
+[profiles.warm.sampling]
+temperature = 0.8
+top_p = 0.95
+"#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize profile sampling");
+    let cold = &parsed.profiles["cold"];
+    assert_eq!(
+        cold.sampling,
+        Some(SamplingParams {
+            temperature: Some(0.0),
+            top_p: None,
+            top_k: None,
+        })
+    );
+
+    let warm = &parsed.profiles["warm"];
+    assert_eq!(
+        warm.sampling,
+        Some(SamplingParams {
+            temperature: Some(0.8),
+            top_p: Some(0.95),
+            top_k: None,
+        })
+    );
+}
+
+#[test]
+fn tool_choice_none_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "none"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::None)
+    );
+}
+
+#[test]
+fn tool_choice_specific_from_toml() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+[tool_choice]
+type = "specific"
+name = "shell"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Specific {
+            name: "shell".to_string()
+        })
+    );
+}
+
+#[test]
+fn tool_choice_absent_from_toml_yields_none() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, "").unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(config.tool_choice, None);
+}
+
+#[test]
+fn tool_choice_profile_overrides_top_level() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+profile = "force"
+
+[tool_choice]
+type = "auto"
+
+[profiles.force]
+
+[profiles.force.tool_choice]
+type = "required"
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Required)
+    );
+}
+
+#[test]
+fn tool_choice_top_level_used_when_profile_omits() {
+    let codex_home = tempdir().unwrap();
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+    std::fs::write(
+        &config_path,
+        r#"
+profile = "minimal"
+
+[tool_choice]
+type = "required"
+
+[profiles.minimal]
+"#,
+    )
+    .unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str::<ConfigToml>(&std::fs::read_to_string(&config_path).unwrap()).unwrap(),
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )
+    .unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(codex_protocol::config_types::ToolChoice::Required)
+    );
 }

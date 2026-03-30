@@ -11,7 +11,7 @@ Scenario: Pre-turn auto-compaction with a context override emits the context dif
 03:message/assistant:FIRST_REPLY
 04:message/user:USER_TWO
 05:message/assistant:SECOND_REPLY
-06:message/user:<SUMMARIZATION_PROMPT>
+06:message/user:You are the component that summarizes internal chat history into...
 
 ## Local Post-Compaction History Layout
 00:message/user:USER_ONE

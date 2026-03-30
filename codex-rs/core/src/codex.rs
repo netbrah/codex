@@ -1869,6 +1869,8 @@ impl Session {
                 session_configuration.provider.clone(),
                 session_configuration.session_source.clone(),
                 config.model_verbosity,
+                config.tool_choice.clone(),
+                config.messages_metadata_user_id.clone(),
                 config.features.enabled(Feature::EnableRequestCompression),
                 config.features.enabled(Feature::RuntimeMetrics),
                 Self::build_model_client_beta_features_header(config.as_ref()),
@@ -3354,6 +3356,24 @@ impl Session {
             return false;
         }
 
+        // The cyber-safety warning is only meaningful for direct OpenAI /responses
+        // connections where a model mismatch signals a real account-level reroute.
+        // LiteLLM and other proxies always echo their internal backend model name in
+        // the SSE `message_start.model` field rather than the alias the client sent,
+        // so the mismatch is structural and permanent — never a real reroute.
+        // Suppress on any non-OpenAI provider or non-Responses wire to avoid
+        // spamming OpenAI-specific copy on Claude/proxy sessions.
+        if turn_context.provider.wire_api != crate::model_provider_info::WireApi::Responses
+            || !turn_context.provider.is_openai()
+        {
+            info!(
+                requested = %requested_model,
+                server = %server_model,
+                "server model mismatch on proxy/messages provider — suppressing OpenAI-specific cyber warning"
+            );
+            return false;
+        }
+
         warn!("server reported model {server_model} while requested model was {requested_model}");
 
         let warning_message = format!(
@@ -3713,6 +3733,7 @@ impl Session {
             info.last_token_usage = TokenUsage {
                 input_tokens: 0,
                 cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
                 output_tokens: 0,
                 reasoning_output_tokens: 0,
                 total_tokens: estimated_total_tokens.max(0),
@@ -5849,6 +5870,35 @@ pub(crate) async fn run_turn(
                 }
 
                 if !needs_follow_up {
+                    // Circuit breaker: detect death spiral of consecutive empty responses.
+                    {
+                        let mut state = sess.state.lock().await;
+                        if sampling_request_last_agent_message.is_none() {
+                            state.consecutive_null_completions += 1;
+                            if state.consecutive_null_completions >= 3 {
+                                let count = state.consecutive_null_completions;
+                                state.consecutive_null_completions = 0;
+                                drop(state);
+                                sess.send_event(
+                                    &turn_context,
+                                    EventMsg::Warning(WarningEvent {
+                                        message: format!(
+                                            "The model produced {count} consecutive empty \
+                                             responses. The conversation context may be too \
+                                             degraded to continue. Please start a new thread \
+                                             (/clear) or try /compact."
+                                        ),
+                                    }),
+                                )
+                                .await;
+                                last_agent_message = None;
+                                break;
+                            }
+                        } else {
+                            state.consecutive_null_completions = 0;
+                        }
+                    }
+
                     last_agent_message = sampling_request_last_agent_message;
                     let stop_hook_permission_mode = match turn_context.approval_policy.value() {
                         AskForApproval::Never => "bypassPermissions",
@@ -7133,6 +7183,7 @@ async fn try_run_sampling_request(
             turn_context.reasoning_effort,
             turn_context.reasoning_summary,
             turn_context.config.service_tier,
+            turn_context.config.sampling,
             turn_metadata_header,
         )
         .instrument(trace_span!("stream_request"))
@@ -7311,9 +7362,18 @@ async fn try_run_sampling_request(
                 sess.services.models_manager.refresh_if_new_etag(etag).await;
             }
             ResponseEvent::Completed {
+                stop_reason,
                 response_id: _,
                 token_usage,
             } => {
+                // Log Anthropic stop_reason for diagnostics and future
+                // truncation-detection / auto-continue support.
+                if let Some(ref reason) = stop_reason {
+                    tracing::info!(
+                        anthropic_stop_reason = %reason,
+                        "Anthropic message completed"
+                    );
+                }
                 flush_assistant_text_segments_all(
                     &sess,
                     &turn_context,

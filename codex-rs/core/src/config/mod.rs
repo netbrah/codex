@@ -72,6 +72,7 @@ use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ToolChoice;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchConfig;
@@ -133,6 +134,7 @@ pub(crate) use permissions::resolve_permission_profile;
 pub use service::ConfigService;
 pub use service::ConfigServiceError;
 pub use types::ApprovalsReviewer;
+pub use types::SamplingParams;
 
 pub use codex_git_utils::GhostSnapshotConfig;
 
@@ -271,6 +273,8 @@ pub struct Config {
     /// Effective service tier preference for new turns (`fast` or `flex`).
     pub service_tier: Option<ServiceTier>,
 
+    /// Sampling parameters (temperature, top_p, top_k) for model requests.
+    pub sampling: SamplingParams,
     /// Model used specifically for review sessions.
     pub review_model: Option<String>,
 
@@ -522,6 +526,22 @@ pub struct Config {
 
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
+
+    /// Sampling temperature for model requests.
+    pub temperature: Option<f64>,
+
+    /// Nucleus sampling parameter (top_p).
+    pub top_p: Option<f64>,
+
+    /// Top-k sampling parameter (Anthropic Messages API only).
+    pub top_k: Option<u32>,
+    /// Controls how the model selects tools (`auto`, `required`, `none`, or
+    /// `specific` with a tool name).
+    pub tool_choice: Option<ToolChoice>,
+    /// User identifier sent in `metadata.user_id` for Anthropic Messages API
+    /// requests. Resolved from `messages_metadata_user_id` in config or
+    /// defaulted to the OS username.
+    pub messages_metadata_user_id: Option<String>,
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
@@ -1300,6 +1320,24 @@ pub struct ConfigToml {
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
 
+    /// Sampling temperature for model requests. Lower values (e.g. 0.0) make
+    /// output more deterministic; higher values (e.g. 1.0) make it more
+    /// creative. When unset, the model provider default is used.
+    pub temperature: Option<f64>,
+
+    /// Nucleus sampling parameter. Only tokens whose cumulative probability
+    /// mass is within the top_p fraction are considered. When unset, the model
+    /// provider default is used.
+    pub top_p: Option<f64>,
+
+    /// Top-k sampling parameter (Anthropic Messages API only). Only the top_k
+    /// most probable tokens are considered at each step. When unset, the model
+    /// provider default is used.
+    pub top_k: Option<u32>,
+    /// Controls how the model selects tools (`auto`, `required`, `none`, or
+    /// `specific` with a tool name).
+    pub tool_choice: Option<ToolChoice>,
+
     /// Override to force-enable reasoning summaries for the configured model.
     pub model_supports_reasoning_summaries: Option<bool>,
 
@@ -1313,11 +1351,21 @@ pub struct ConfigToml {
     /// Optional explicit service tier preference for new turns (`fast` or `flex`).
     pub service_tier: Option<ServiceTier>,
 
+    /// Sampling parameters (temperature, top_p, top_k) for model requests.
+    /// Overrides server-side defaults when set.
+    #[serde(default)]
+    pub sampling: SamplingParams,
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,
 
     /// Base URL override for the built-in `openai` model provider.
     pub openai_base_url: Option<String>,
+
+    /// User identifier sent in the `metadata.user_id` field of Anthropic
+    /// Messages API requests. Used for attribution, audit logging, and
+    /// per-user telemetry at the provider level. Defaults to the OS username
+    /// when unset.
+    pub messages_metadata_user_id: Option<String>,
 
     /// Experimental / do not use. Overrides the URL used when connecting to
     /// a remote exec server.
@@ -2419,6 +2467,10 @@ impl Config {
             _ => None,
         };
 
+        let sampling = config_profile
+            .sampling
+            .unwrap_or_default()
+            .merge(cfg.sampling);
         let compact_prompt = compact_prompt.or(cfg.compact_prompt).and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -2580,6 +2632,7 @@ impl Config {
         let config = Self {
             model,
             service_tier,
+            sampling,
             review_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
@@ -2669,6 +2722,11 @@ impl Config {
             model_supports_reasoning_summaries: cfg.model_supports_reasoning_summaries,
             model_catalog,
             model_verbosity: config_profile.model_verbosity.or(cfg.model_verbosity),
+            temperature: config_profile.temperature.or(cfg.temperature),
+            top_p: config_profile.top_p.or(cfg.top_p),
+            top_k: config_profile.top_k.or(cfg.top_k),
+            tool_choice: config_profile.tool_choice.or(cfg.tool_choice),
+            messages_metadata_user_id: cfg.messages_metadata_user_id.or_else(resolve_os_username),
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
@@ -2900,6 +2958,15 @@ pub fn find_codex_home() -> std::io::Result<PathBuf> {
 /// that the directory exists.
 pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
     Ok(cfg.log_dir.clone())
+}
+
+/// Returns the OS username of the current process, or `None` if it cannot be
+/// determined.
+fn resolve_os_username() -> Option<String> {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]

@@ -1,0 +1,68 @@
+# Codex CLI (XLI) — Cursor Spoke Rules
+
+## Role
+You are working on the Rust universal CLI agent harness (codename XLI). This is a fork of OpenAI Codex with a novel Anthropic /messages wire protocol implementation.
+
+## Why This Matters
+XLI is one of two universal harnesses in a cross-wire CLI agent project. Traditional agents (Codex, Claude Code, Gemini CLI) are monolithic — one wire, one model. XLI speaks both /responses (native) and /messages (our addition), so it can drive Claude, GPT, and eventually Gemini from the same Rust binary. The /messages wire is the novel engineering: 3,459 lines translating between Codex's ResponseItem[] lingua franca and Anthropic's message format.
+
+Your work here — whether closing null-space gaps, porting features from the TS harness (Apex), or improving the harness — directly expands what models this harness can drive and how well.
+
+**Two tiers**: Features you build here land on the PUBLIC tier (netbrah GitHub). The proprietary tier (NetApp XLI) is just the binary built from this branch + deployment configs in `cli-ops/deploy/xli/`.
+
+## Orientation
+1. Check current branch: `git branch --show-current`
+2. If on a `sortie/` branch: you are a sortie agent. Work ONLY on this branch. Do not merge into primary branches.
+3. If on `dev`: you are on the primary development branch. Proceed normally.
+4. Read `AGENTS.md` for architecture context.
+
+## Architecture
+- **Language**: Rust (workspace of crates under `codex-rs/`)
+- **Native wire**: OpenAI /responses (`codex-rs/codex-api/src/sse/responses.rs`)
+- **Novel wire**: Anthropic /messages (`codex-rs/codex-api/src/sse/messages.rs`, `codex-rs/core/src/messages_wire.rs`)
+- **Internal format**: `ResponseItem` enum — the lingua franca. Single conversion boundary at the wire.
+- **Upstream**: `openai/codex` (remote: `upstream`)
+
+## Key Files
+- `codex-rs/core/src/messages_wire.rs` — conversation translator (ResponseItem[] <-> Anthropic messages JSON)
+- `codex-rs/core/src/client.rs` — ModelClient, request construction for both wires
+- `codex-rs/codex-api/src/sse/messages.rs` — SSE parser with BlockTracker state machine
+- `codex-rs/codex-api/src/endpoint/messages.rs` — HTTP client for /messages
+- `codex-rs/core/src/config/mod.rs` — Config with sampling params, tool_choice, etc.
+- `codex-rs/protocol/src/config_types.rs` — ToolChoice enum, SamplingParams
+
+## Known Null Space (P0 issues)
+- **Developer role messages silently dropped** in /messages wire (BREAK-1). Lines 20-26 of messages_wire.rs `continue` on "developer" role. Claude never sees AGENTS.md, permissions, or personality.
+- **stop_reason not parsed** from message_delta SSE events. Cannot distinguish end_turn/tool_use/max_tokens.
+
+## Wire Status
+| Wire | Status | Key Concern |
+|------|--------|-------------|
+| /responses | Native (upstream) | No changes needed |
+| /messages | Implemented, sorties closing gaps | Developer role loss, sampling params, tool_choice |
+| generateContent | Not started | Future work |
+
+## Build & Test
+```bash
+cd codex-rs
+cargo build --release -p codex-cli
+cargo test -p codex-api        # messages + responses tests
+cargo test -p codex-protocol   # config type tests
+# codex-core tests blocked by v8 dependency in sandbox — run outside sandbox
+```
+
+## Sortie Agent Rules (if on a sortie/ branch)
+- Work ONLY on your assigned branch
+- Commit with conventional commit messages: `fix:`, `feat:`, `test:`
+- Do NOT merge into `dev`
+- Do NOT switch to other branches
+- Do NOT revert commits you did not make
+- Run `cargo test -p codex-api` before final commit
+
+## Hub Reference
+Coordination hub: `~/Projects/cli-ops/`
+- Sortie board: `~/Projects/cli-ops/sortie-board/SORTIE-BOARD.md`
+- Null-space master: `~/Projects/cli-ops/docs/null-space-ops/MASTER.md`
+- Wire audit: `~/Projects/cli-ops/docs/null-space-ops/reference/wire-audit-xli.md`
+- Objectives & KPIs: `~/Projects/cli-ops/docs/04-OBJECTIVES-AND-KPIs.md`
+- Ops runbook: `~/Projects/cli-ops/docs/05-RUNBOOK.md` (RB-3: sortie cycle, RB-5: XLI build)

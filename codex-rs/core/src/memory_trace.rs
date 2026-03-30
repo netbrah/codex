@@ -53,6 +53,13 @@ pub async fn build_memories_from_trace_files(
     let output = client
         .summarize_memories(raw_memories, model_info, effort, session_telemetry)
         .await?;
+    if output.is_empty() && !prepared.is_empty() {
+        tracing::warn!(
+            "memory summarization not available for this wire protocol; skipping {} trace(s)",
+            prepared.len()
+        );
+        return Ok(Vec::new());
+    }
     if output.len() != prepared.len() {
         return Err(CodexErr::InvalidRequest(format!(
             "unexpected memory summarize output length: expected {}, got {}",

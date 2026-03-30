@@ -75,6 +75,9 @@ pub enum ResponseEvent {
     /// client should not re-estimate them.
     ServerReasoningIncluded(bool),
     Completed {
+        /// Anthropic stop_reason from message_delta (end_turn, tool_use, max_tokens, stop_sequence).
+        /// None for Responses wire (stop semantics handled differently).
+        stop_reason: Option<String>,
         response_id: String,
         token_usage: Option<TokenUsage>,
     },
@@ -168,6 +171,10 @@ pub struct ResponsesApiRequest {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextControls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
 }
 
 impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
@@ -187,6 +194,8 @@ impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
             service_tier: request.service_tier.clone(),
             prompt_cache_key: request.prompt_cache_key.clone(),
             text: request.text.clone(),
+            temperature: request.temperature,
+            top_p: request.top_p,
             generate: None,
             client_metadata: None,
         }
@@ -213,6 +222,10 @@ pub struct ResponseCreateWsRequest {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextControls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generate: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

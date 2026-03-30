@@ -10,7 +10,7 @@ Scenario: True mid-turn continuation compaction after tool output: compact reque
 02:message/user:function call limit push
 03:function_call/test_tool
 04:function_call_output:unsupported call: test_tool
-05:message/user:<SUMMARIZATION_PROMPT>
+05:message/user:You are the component that summarizes internal chat history into...
 
 ## Local Post-Compaction History Layout
 00:message/developer:<PERMISSIONS_INSTRUCTIONS>

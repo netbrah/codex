@@ -18,7 +18,10 @@ pub fn create_config_summary_entries(config: &Config, model: &str) -> Vec<(&'sta
             summarize_sandbox_policy(config.permissions.sandbox_policy.get()),
         ),
     ];
-    if config.model_provider.wire_api == WireApi::Responses {
+    if matches!(
+        config.model_provider.wire_api,
+        WireApi::Responses | WireApi::Messages
+    ) {
         let reasoning_effort = config
             .model_reasoning_effort
             .map(|effort| effort.to_string());

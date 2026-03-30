@@ -14,7 +14,7 @@ Scenario: Pre-turn compaction during model switch (without pre-sampling model-sw
 01:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
 02:message/user:BEFORE_SWITCH_USER
 03:message/assistant:BEFORE_SWITCH_REPLY
-04:message/user:<SUMMARIZATION_PROMPT>
+04:message/user:You are the component that summarizes internal chat history into...
 
 ## Local Post-Compaction History Layout
 00:message/user:BEFORE_SWITCH_USER

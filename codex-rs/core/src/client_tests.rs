@@ -21,6 +21,8 @@ fn test_model_client(session_source: SessionSource) -> ModelClient {
         provider,
         session_source,
         None,
+        /*tool_choice*/ None,
+        None,
         false,
         false,
         None,
@@ -114,4 +116,361 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
     assert!(auth_context.retry_after_unauthorized);
     assert_eq!(auth_context.recovery_mode, Some("managed"));
     assert_eq!(auth_context.recovery_phase, Some("refresh_token"));
+}
+
+mod tool_choice_tests {
+    use super::ModelClient;
+    use super::SessionSource;
+    use super::ThreadId;
+    use super::test_model_info;
+    use codex_protocol::config_types::ToolChoice;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    fn client_with_tool_choice(tool_choice: Option<ToolChoice>) -> ModelClient {
+        let provider = crate::model_provider_info::create_oss_provider_with_base_url(
+            "https://example.com/v1",
+            crate::model_provider_info::WireApi::Responses,
+        );
+        ModelClient::new(
+            None,
+            ThreadId::new(),
+            provider,
+            SessionSource::Cli,
+            None,
+            tool_choice,
+            None,
+            false,
+            false,
+            None,
+        )
+    }
+
+    // --- Responses API (OpenAI) tool_choice conversion tests ---
+
+    #[test]
+    fn responses_api_default_none_is_auto() {
+        let client = client_with_tool_choice(None);
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "auto");
+    }
+
+    #[test]
+    fn responses_api_auto() {
+        let client = client_with_tool_choice(Some(ToolChoice::Auto));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "auto");
+    }
+
+    #[test]
+    fn responses_api_required() {
+        let client = client_with_tool_choice(Some(ToolChoice::Required));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "required");
+    }
+
+    #[test]
+    fn responses_api_none() {
+        let client = client_with_tool_choice(Some(ToolChoice::None));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "none");
+    }
+
+    #[test]
+    fn responses_api_specific_maps_to_required() {
+        let client = client_with_tool_choice(Some(ToolChoice::Specific {
+            name: "shell".to_string(),
+        }));
+        let session = client.new_session();
+        assert_eq!(session.responses_api_tool_choice(), "required");
+    }
+
+    // --- Messages API (Anthropic) tool_choice conversion tests ---
+
+    #[test]
+    fn messages_api_default_none_is_auto() {
+        let client = client_with_tool_choice(None);
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "auto"}));
+    }
+
+    #[test]
+    fn messages_api_auto() {
+        let client = client_with_tool_choice(Some(ToolChoice::Auto));
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "auto"}));
+    }
+
+    #[test]
+    fn messages_api_required_maps_to_any() {
+        let client = client_with_tool_choice(Some(ToolChoice::Required));
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "any"}));
+    }
+
+    #[test]
+    fn messages_api_specific_includes_name() {
+        let client = client_with_tool_choice(Some(ToolChoice::Specific {
+            name: "bash_20250306".to_string(),
+        }));
+        let session = client.new_session();
+        assert_eq!(
+            session.messages_api_tool_choice(),
+            json!({"type": "tool", "name": "bash_20250306"})
+        );
+    }
+
+    #[test]
+    fn messages_api_none_falls_back_to_auto() {
+        // Anthropic doesn't support "none" tool_choice; the caller omits
+        // tools entirely. The method falls back to "auto".
+        let client = client_with_tool_choice(Some(ToolChoice::None));
+        let session = client.new_session();
+        assert_eq!(session.messages_api_tool_choice(), json!({"type": "auto"}));
+    }
+
+    // --- Full request building tests ---
+
+    #[test]
+    fn build_responses_request_uses_configured_tool_choice() {
+        let provider = crate::model_provider_info::create_oss_provider_with_base_url(
+            "https://example.com/v1",
+            crate::model_provider_info::WireApi::Responses,
+        );
+        let api_provider = codex_api::Provider {
+            name: "test".to_string(),
+            base_url: "https://example.com/v1".to_string(),
+            query_params: None,
+            headers: Default::default(),
+            retry: codex_api::provider::RetryConfig {
+                max_attempts: 1,
+                base_delay: std::time::Duration::from_millis(100),
+                retry_429: false,
+                retry_5xx: false,
+                retry_transport: false,
+            },
+            stream_idle_timeout: std::time::Duration::from_secs(30),
+        };
+        let client = ModelClient::new(
+            None,
+            ThreadId::new(),
+            provider,
+            SessionSource::Cli,
+            None,
+            Some(ToolChoice::Required),
+            None,
+            false,
+            false,
+            None,
+        );
+        let session = client.new_session();
+
+        let model_info = test_model_info();
+        let prompt = crate::client_common::Prompt::default();
+        let request = session
+            .build_responses_request(
+                &api_provider,
+                &prompt,
+                &model_info,
+                Option::None,
+                codex_protocol::config_types::ReasoningSummary::Auto,
+                Option::None,
+                crate::config::SamplingParams::default(),
+            )
+            .expect("build request");
+        assert_eq!(request.tool_choice, "required");
+    }
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_claude_opus() {
+    assert_eq!(super::anthropic_max_output_tokens("claude-opus-4-6"), 128_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_claude_haiku() {
+    assert_eq!(super::anthropic_max_output_tokens("claude-haiku-3-5"), 8_192);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_claude_sonnet() {
+    assert_eq!(super::anthropic_max_output_tokens("claude-sonnet-4-6"), 64_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_proxy_opus_no_claude_prefix() {
+    // Proxy model names that happen to contain "opus" should NOT get 128K
+    assert_eq!(super::anthropic_max_output_tokens("my-opus-proxy"), 64_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_proxy_opus_with_company() {
+    // Company-namespaced model with "opus" substring should NOT get 128K
+    assert_eq!(super::anthropic_max_output_tokens("company/opus-tuned"), 64_000);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_real_anthropic_slug() {
+    // Real Anthropic model slug format
+    assert_eq!(
+        super::anthropic_max_output_tokens("claude-3-opus-20240229"),
+        128_000
+    );
+}
+
+// ── T-4-B: anthropic_max_output_tokens extended coverage ───────────
+
+#[test]
+fn test_anthropic_max_output_tokens_vertex_aliased_slug() {
+    // Proxy may use vertex_ai/claude-sonnet-4-6 format — doesn't start with "claude"
+    let cap = super::anthropic_max_output_tokens("vertex_ai/claude-sonnet-4-6");
+    assert_eq!(cap, 64_000, "vertex_ai prefix means not starts_with(claude) — gets default");
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_unknown_claude_model() {
+    let cap = super::anthropic_max_output_tokens("claude-unknown-model-999");
+    assert!(
+        cap > 0 && cap <= 200_000,
+        "unknown Claude model should get a sane default: {cap}"
+    );
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_case_insensitive() {
+    assert_eq!(super::anthropic_max_output_tokens("Claude-Opus-4-6"), 128_000);
+    assert_eq!(super::anthropic_max_output_tokens("CLAUDE-HAIKU-3-5"), 8_192);
+}
+
+#[test]
+fn test_anthropic_max_output_tokens_non_claude_default() {
+    assert_eq!(super::anthropic_max_output_tokens("gpt-5"), 64_000);
+    assert_eq!(super::anthropic_max_output_tokens("llama-3"), 64_000);
+}
+
+// ── T-1-F: WireApi serde tests (merge regression guard) ────────────
+
+#[test]
+fn wire_api_deserializes_messages() {
+    use crate::model_provider_info::WireApi;
+    let wire_api: WireApi =
+        serde_json::from_str(r#""messages""#).expect("WireApi should deserialize 'messages'");
+    assert!(matches!(wire_api, WireApi::Messages));
+}
+
+#[test]
+fn wire_api_deserializes_responses() {
+    use crate::model_provider_info::WireApi;
+    let wire_api: WireApi = serde_json::from_str(r#""responses""#).unwrap();
+    assert!(matches!(wire_api, WireApi::Responses));
+}
+
+#[test]
+fn wire_api_rejects_unknown() {
+    use crate::model_provider_info::WireApi;
+    let result: Result<WireApi, _> = serde_json::from_str(r#""generateContent""#);
+    assert!(result.is_err(), "unknown wire_api should be rejected");
+}
+
+#[test]
+fn wire_api_rejects_chat_with_error() {
+    use crate::model_provider_info::WireApi;
+    let err = serde_json::from_str::<WireApi>(r#""chat""#).expect_err("'chat' should be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("removed") || msg.contains("chat") || msg.contains("no longer"),
+        "error should explain chat removal: {msg}"
+    );
+}
+
+#[test]
+fn wire_api_messages_round_trips() {
+    use crate::model_provider_info::WireApi;
+    let original = WireApi::Messages;
+    let serialized = serde_json::to_string(&original).unwrap();
+    assert_eq!(serialized, r#""messages""#);
+    let back: WireApi = serde_json::from_str(&serialized).unwrap();
+    assert!(matches!(back, WireApi::Messages));
+}
+
+// ── adaptive thinking tests ─────────────────────────────────────────
+
+mod adaptive_thinking_tests {
+    use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+    use serde_json::json;
+
+    #[test]
+    fn thinking_none_effort_returns_none() {
+        assert!(super::super::anthropic_thinking_param(None).is_none());
+    }
+
+    #[test]
+    fn thinking_minimal_returns_none() {
+        assert!(
+            super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::Minimal)).is_none()
+        );
+    }
+
+    #[test]
+    fn thinking_effort_none_variant_returns_none() {
+        assert!(
+            super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::None)).is_none()
+        );
+    }
+
+    #[test]
+    fn thinking_low_returns_adaptive() {
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::Low));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn thinking_medium_returns_adaptive() {
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::Medium));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn thinking_high_returns_adaptive() {
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::High));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn thinking_xhigh_returns_adaptive_not_budget() {
+        // xhigh previously set budget_tokens: 131072, now uses adaptive
+        // to avoid token cost balloon on mechanical turns
+        let result = super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::XHigh));
+        assert_eq!(result, Some(json!({ "type": "adaptive" })));
+    }
+
+    #[test]
+    fn adaptive_has_no_budget_tokens() {
+        let result =
+            super::super::anthropic_thinking_param(Some(ReasoningEffortConfig::High)).unwrap();
+        assert!(
+            result.get("budget_tokens").is_none(),
+            "adaptive thinking must not include budget_tokens"
+        );
+    }
+
+    #[test]
+    fn all_active_efforts_produce_identical_adaptive() {
+        // All non-disabled effort levels produce identical adaptive config:
+        // the effort enum no longer maps to different budgets on the Messages wire
+        let efforts = [
+            ReasoningEffortConfig::Low,
+            ReasoningEffortConfig::Medium,
+            ReasoningEffortConfig::High,
+            ReasoningEffortConfig::XHigh,
+        ];
+        let expected = json!({ "type": "adaptive" });
+        for effort in efforts {
+            assert_eq!(
+                super::super::anthropic_thinking_param(Some(effort)),
+                Some(expected.clone()),
+                "effort {effort:?} should produce adaptive thinking"
+            );
+        }
+    }
 }

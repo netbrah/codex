@@ -66,6 +66,7 @@ use codex_otel::current_span_w3c_trace_context;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ToolChoice;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
@@ -97,10 +98,14 @@ use crate::auth::RefreshTokenError;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
+use crate::config::SamplingParams;
 use crate::default_client::build_reqwest_client;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
+use crate::messages_wire::conversation_to_anthropic_messages;
+use crate::messages_wire::extract_developer_blocks;
+use crate::messages_wire::tools_to_anthropic_format;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::response_debug_context::extract_response_debug_context;
@@ -111,6 +116,8 @@ use crate::tools::spec::create_tools_json_for_responses_api;
 use crate::util::FeedbackRequestTags;
 use crate::util::emit_feedback_auth_recovery_tags;
 use crate::util::emit_feedback_request_tags_with_auth_env;
+use codex_api::MessagesClient as ApiMessagesClient;
+use codex_api::{MessagesApiMetadata, MessagesApiRequest};
 
 pub const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 pub const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
@@ -137,6 +144,9 @@ struct ModelClientState {
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     model_verbosity: Option<VerbosityConfig>,
+    tool_choice: Option<ToolChoice>,
+    /// User identifier for Anthropic Messages API `metadata.user_id`.
+    messages_metadata_user_id: Option<String>,
     enable_request_compression: bool,
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
@@ -257,6 +267,8 @@ impl ModelClient {
         provider: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
+        tool_choice: Option<ToolChoice>,
+        messages_metadata_user_id: Option<String>,
         enable_request_compression: bool,
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
@@ -273,6 +285,8 @@ impl ModelClient {
                 auth_env_telemetry,
                 session_source,
                 model_verbosity,
+                tool_choice,
+                messages_metadata_user_id,
                 enable_request_compression,
                 include_timing_metrics,
                 beta_features_header,
@@ -416,6 +430,10 @@ impl ModelClient {
         session_telemetry: &SessionTelemetry,
     ) -> Result<Vec<ApiMemorySummarizeOutput>> {
         if raw_memories.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if self.state.provider.wire_api != WireApi::Responses {
             return Ok(Vec::new());
         }
 
@@ -679,6 +697,48 @@ impl ModelClientSession {
             .set_connection_reused(/*connection_reused*/ false);
     }
 
+    /// Convert the configured [`ToolChoice`] into the OpenAI Responses API
+    /// `tool_choice` string.
+    ///
+    /// Responses API accepts `"auto"`, `"none"`, or `"required"`.
+    /// For a specific tool it also accepts an object, but the current wire type
+    /// is `String`, so we map `Specific` to `"required"` as the closest
+    /// available semantic (force at least one tool call).
+    fn responses_api_tool_choice(&self) -> String {
+        match self.client.state.tool_choice.as_ref() {
+            None | Some(ToolChoice::Auto) => "auto".to_string(),
+            Some(ToolChoice::Required) | Some(ToolChoice::Specific { .. }) => {
+                "required".to_string()
+            }
+            Some(ToolChoice::None) => "none".to_string(),
+        }
+    }
+
+    /// Convert the configured [`ToolChoice`] into an Anthropic Messages API
+    /// `tool_choice` JSON value.
+    ///
+    /// Messages API accepts `{"type": "auto"}`, `{"type": "any"}`,
+    /// `{"type": "tool", "name": "<name>"}`.
+    /// Note: Anthropic does not support `"none"` via tool_choice — instead the
+    /// caller should omit tools entirely. When `ToolChoice::None` is set we
+    /// still emit `{"type": "auto"}` and rely on the caller to skip the tools
+    /// array (which the existing `has_tools` guard already handles).
+    fn messages_api_tool_choice(&self) -> serde_json::Value {
+        match self.client.state.tool_choice.as_ref() {
+            None | Some(ToolChoice::Auto) => serde_json::json!({"type": "auto"}),
+            Some(ToolChoice::Required) => serde_json::json!({"type": "any"}),
+            Some(ToolChoice::Specific { name }) => {
+                serde_json::json!({"type": "tool", "name": name})
+            }
+            Some(ToolChoice::None) => {
+                // Anthropic doesn't have a "none" tool_choice; the caller
+                // should omit tools. Fall back to "auto" so the request is
+                // still valid if tools happen to be present.
+                serde_json::json!({"type": "auto"})
+            }
+        }
+    }
+
     fn build_responses_request(
         &self,
         provider: &codex_api::Provider,
@@ -687,6 +747,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
@@ -730,7 +791,7 @@ impl ModelClientSession {
             instructions: instructions.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
+            tool_choice: self.responses_api_tool_choice(),
             parallel_tool_calls: prompt.parallel_tool_calls,
             reasoning,
             store: provider.is_azure_responses_endpoint(),
@@ -743,6 +804,8 @@ impl ModelClientSession {
             },
             prompt_cache_key,
             text,
+            temperature: sampling.temperature,
+            top_p: sampling.top_p,
         };
         Ok(request)
     }
@@ -1003,6 +1066,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
         if let Some(path) = &*CODEX_RS_SSE_FIXTURE {
@@ -1045,6 +1109,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
             )?;
             let client = ApiResponsesClient::new(
                 transport,
@@ -1055,6 +1120,165 @@ impl ModelClientSession {
             let stream_result = client.stream_request(request, options).await;
 
             match stream_result {
+                Ok(stream) => {
+                    let (stream, _) = map_response_stream(stream, session_telemetry.clone());
+                    return Ok(stream);
+                }
+                Err(ApiError::Transport(
+                    unauthorized_transport @ TransportError::Http { status, .. },
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(
+                        handle_unauthorized(
+                            unauthorized_transport,
+                            &mut auth_recovery,
+                            session_telemetry,
+                        )
+                        .await?,
+                    );
+                    continue;
+                }
+                Err(err) => return Err(map_api_error(err)),
+            }
+        }
+    }
+
+    /// Streams a turn via the Anthropic Messages API (`/v1/messages`).
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(
+        name = "model_client.stream_messages_api",
+        level = "info",
+        skip_all,
+        fields(
+            model = %model_info.slug,
+            wire_api = "messages",
+            transport = "messages_http",
+            http.method = "POST",
+            api.path = "messages",
+        )
+    )]
+    async fn stream_messages_api(
+        &self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        effort: Option<ReasoningEffortConfig>,
+        _summary: ReasoningSummaryConfig,
+        _service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
+        turn_metadata_header: Option<&str>,
+    ) -> Result<ResponseStream> {
+        let auth_manager = self.client.state.auth_manager.clone();
+        let mut auth_recovery = auth_manager
+            .as_ref()
+            .map(super::auth::AuthManager::unauthorized_recovery);
+        let mut pending_retry = PendingUnauthorizedRetry::default();
+        loop {
+            let client_setup = self.client.current_client_setup().await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let request_auth_context = AuthRequestTelemetryContext::new(
+                client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+                &client_setup.api_auth,
+                pending_retry,
+            );
+            let (request_telemetry, _sse_telemetry) = Self::build_streaming_telemetry(
+                session_telemetry,
+                request_auth_context,
+                RequestRouteTelemetry::for_endpoint("/messages"),
+                self.client.state.auth_env_telemetry.clone(),
+            );
+            let client =
+                ApiMessagesClient::new(transport, client_setup.api_provider, client_setup.api_auth)
+                    .with_telemetry(Some(request_telemetry));
+
+            let input = prompt.get_formatted_input();
+            let messages = conversation_to_anthropic_messages(&input);
+            let anthropic_tools = tools_to_anthropic_format(&prompt.tools);
+
+            // Build the system parameter: base_instructions + developer-role blocks.
+            // Developer-role messages carry AGENTS.md, permission directives, and
+            // personality config. They must be injected into system[] rather than
+            // messages[] on the Anthropic wire. (BREAK-1 / W-7)
+            let developer_blocks = extract_developer_blocks(&input);
+            let system = {
+                let mut system_parts: Vec<serde_json::Value> = Vec::new();
+                if !prompt.base_instructions.text.is_empty() {
+                    system_parts.push(serde_json::json!({
+                        "type": "text",
+                        "text": prompt.base_instructions.text,
+                    }));
+                }
+                for dev_text in &developer_blocks {
+                    system_parts.push(serde_json::json!({
+                        "type": "text",
+                        "text": dev_text
+                    }));
+                }
+                // Place cache_control on the LAST system block for optimal prompt
+                // caching. Anthropic caches everything up to the cache_control
+                // breakpoint, so it should be after all static content (base
+                // instructions + developer blocks) that stays the same across turns.
+                if let Some(last) = system_parts.last_mut() {
+                    last["cache_control"] = serde_json::json!({"type": "ephemeral"});
+                }
+                if system_parts.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Array(system_parts))
+                }
+            };
+
+            let model_output_cap = anthropic_max_output_tokens(&model_info.slug);
+            let mut max_tokens: u32 = model_output_cap;
+
+            // Use adaptive thinking: the model decides when and how much to
+            // reason per turn, eliminating wasted thinking tokens on mechanical
+            // turns (tool result acks, simple dispatches).
+            let thinking = anthropic_thinking_param(effort);
+            if thinking.is_some() {
+                max_tokens = model_output_cap;
+            }
+
+            let has_tools = !anthropic_tools.is_empty();
+            let metadata = self
+                .client
+                .state
+                .messages_metadata_user_id
+                .as_ref()
+                .map(|user_id| MessagesApiMetadata {
+                    user_id: user_id.clone(),
+                });
+            let request = MessagesApiRequest {
+                model: model_info.slug.clone(),
+                messages,
+                max_tokens,
+                stream: true,
+                system,
+                tools: if has_tools {
+                    Some(anthropic_tools)
+                } else {
+                    None
+                },
+                tool_choice: if has_tools {
+                    Some(self.messages_api_tool_choice())
+                } else {
+                    None
+                },
+                thinking,
+                temperature: sampling.temperature,
+                top_p: sampling.top_p,
+                top_k: sampling.top_k,
+                stop_sequences: None,
+                metadata,
+            };
+
+            let mut extra_headers = ApiHeaderMap::new();
+            if let Some(metadata) = turn_metadata_header {
+                if let Ok(val) = HeaderValue::from_str(metadata) {
+                    extra_headers.insert("x-codex-turn-metadata", val);
+                }
+            }
+
+            match client.stream_request(request, extra_headers).await {
                 Ok(stream) => {
                     let (stream, _) = map_response_stream(stream, session_telemetry.clone());
                     return Ok(stream);
@@ -1100,6 +1324,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
@@ -1127,6 +1352,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
             )?;
             let mut ws_payload = ResponseCreateWsRequest {
                 client_metadata: response_create_client_metadata(
@@ -1237,6 +1463,7 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<()> {
         if !self.client.responses_websocket_enabled() {
@@ -1254,6 +1481,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                sampling,
                 turn_metadata_header,
                 /*warmup*/ true,
                 current_span_w3c_trace_context(),
@@ -1294,9 +1522,10 @@ impl ModelClientSession {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        sampling: SamplingParams,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
-        let wire_api = self.client.state.provider.wire_api;
+        let wire_api = self.effective_wire_api(&model_info.slug);
         match wire_api {
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
@@ -1309,6 +1538,7 @@ impl ModelClientSession {
                             effort,
                             summary,
                             service_tier,
+                            sampling,
                             turn_metadata_header,
                             /*warmup*/ false,
                             request_trace,
@@ -1329,9 +1559,53 @@ impl ModelClientSession {
                     effort,
                     summary,
                     service_tier,
+                    sampling,
                     turn_metadata_header,
                 )
                 .await
+            }
+            WireApi::Messages => {
+                self.stream_messages_api(
+                    prompt,
+                    model_info,
+                    session_telemetry,
+                    effort,
+                    summary,
+                    service_tier,
+                    sampling,
+                    turn_metadata_header,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Selects the effective wire API for a given model slug.
+    ///
+    /// When the provider is configured with `wire_api = "messages"` but the
+    /// model is not natively Anthropic (e.g. `gpt-5.3-codex` routed through a
+    /// LiteLLM proxy), the Messages wire is suboptimal: LiteLLM double-
+    /// translates (Messages → Responses → Messages) and its stream adapter
+    /// drops reasoning summary events in transit (LiteLLM 1.82.x).
+    ///
+    /// Rather than papering over the proxy gap, we auto-upgrade to the
+    /// Responses wire for non-Anthropic models. The same provider base URL
+    /// and auth work for both — `/v1/responses` is an adjacent endpoint on
+    /// every OpenAI-compatible proxy.
+    fn effective_wire_api(&self, model_slug: &str) -> WireApi {
+        let configured = self.client.state.provider.wire_api;
+        match configured {
+            WireApi::Responses => WireApi::Responses,
+            WireApi::Messages => {
+                if is_anthropic_model(model_slug) {
+                    WireApi::Messages
+                } else {
+                    tracing::debug!(
+                        model = model_slug,
+                        "auto-upgrading wire API from Messages to Responses for non-Anthropic model"
+                    );
+                    WireApi::Responses
+                }
             }
         }
     }
@@ -1433,6 +1707,7 @@ where
                     }
                 }
                 Ok(ResponseEvent::Completed {
+                    stop_reason,
                     response_id,
                     token_usage,
                 }) => {
@@ -1441,6 +1716,7 @@ where
                             usage.input_tokens,
                             usage.output_tokens,
                             Some(usage.cached_input_tokens),
+                            Some(usage.cache_creation_input_tokens),
                             Some(usage.reasoning_output_tokens),
                             usage.total_tokens,
                         );
@@ -1453,6 +1729,7 @@ where
                     }
                     if tx_event
                         .send(Ok(ResponseEvent::Completed {
+                            stop_reason,
                             response_id,
                             token_usage,
                         }))
@@ -1816,6 +2093,58 @@ impl WebsocketTelemetry for ApiTelemetry {
         self.session_telemetry
             .record_websocket_event(result, duration);
     }
+}
+
+/// Per-model output token caps for Anthropic `/messages`.
+///
+/// Falls back to known Anthropic model families via slug substring matching.
+/// This is intentionally a safety cap (not primary logic) — the default 64K
+/// is correct for all current Claude models except Opus (128K) and Haiku (8K).
+/// If `ModelInfo` gains a `max_output_tokens` field in the future, prefer that.
+/// Returns `true` when `slug` identifies a model that speaks native Anthropic
+/// `/messages` wire (Claude family). Used by [`effective_wire_api`] to decide
+/// whether to keep the Messages wire or auto-upgrade to Responses.
+///
+/// The check is deliberately conservative: unknown slugs return `false`,
+/// causing an upgrade to the Responses wire which is the safer default
+/// (every LiteLLM / OpenAI-compatible proxy supports `/v1/responses`).
+/// Build the `thinking` parameter for an Anthropic `/messages` request.
+///
+/// Returns `None` when thinking should be disabled (effort is None or Minimal),
+/// otherwise returns `{"type": "adaptive"}` which lets the model self-regulate
+/// reasoning depth per turn.
+fn anthropic_thinking_param(effort: Option<ReasoningEffortConfig>) -> Option<serde_json::Value> {
+    effort.and_then(|e| {
+        if matches!(e, ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal) {
+            return None;
+        }
+        Some(serde_json::json!({ "type": "adaptive" }))
+    })
+}
+
+fn is_anthropic_model(slug: &str) -> bool {
+    let s = slug.to_ascii_lowercase();
+    // All current Anthropic model slugs contain "claude".
+    // Vertex AI slugs follow patterns like "claude-sonnet-4-6@default".
+    s.contains("claude")
+}
+
+fn anthropic_max_output_tokens(slug: &str) -> u32 {
+    let normalized = slug.to_lowercase();
+    // Only apply Claude-specific caps to actual Claude model slugs.
+    // Proxy/custom model names that happen to contain "opus" or "haiku"
+    // as substrings get the conservative default.
+    if normalized.starts_with("claude") {
+        if normalized.contains("opus") {
+            return 128_000;
+        }
+        if normalized.contains("haiku") {
+            return 8_192;
+        }
+        return 64_000; // sonnet and future claude models
+    }
+    // Non-Claude models on /messages wire (e.g. routed via proxy): conservative default
+    64_000
 }
 
 #[cfg(test)]
