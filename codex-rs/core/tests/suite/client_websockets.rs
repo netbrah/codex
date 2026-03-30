@@ -1770,6 +1770,7 @@ async fn websocket_harness_with_provider_options(
         None,
         None,
         /*tool_choice*/ None,
+        config.messages_metadata_user_id.clone(),
         false,
         runtime_metrics_enabled,
         None,

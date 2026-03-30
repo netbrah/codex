@@ -103,6 +103,7 @@ fn simple_request() -> MessagesApiRequest {
         top_p: None,
         top_k: None,
         stop_sequences: None,
+        metadata: None,
     }
 }
 

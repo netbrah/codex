@@ -15,6 +15,18 @@ use serde::Serialize;
 use std::sync::Arc;
 use tracing::instrument;
 
+/// Metadata attached to Anthropic `/v1/messages` requests.
+///
+/// Currently only carries an opaque `user_id` for attribution and audit
+/// logging. Anthropic forwards this value in analytics and abuse-monitoring
+/// pipelines, so it should be a stable per-user identifier (OS username,
+/// corporate SSO id, etc.) rather than per-session or per-request.
+#[derive(Debug, Clone, Serialize)]
+pub struct MessagesApiMetadata {
+    /// Opaque external user identifier forwarded to Anthropic for attribution.
+    pub user_id: String,
+}
+
 /// Request body for Anthropic `/v1/messages`.
 #[derive(Debug, Clone, Serialize)]
 pub struct MessagesApiRequest {
@@ -38,6 +50,7 @@ pub struct MessagesApiRequest {
     pub top_k: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
+    pub metadata: Option<MessagesApiMetadata>,
 }
 
 pub struct MessagesClient<T: HttpTransport, A: AuthProvider> {
