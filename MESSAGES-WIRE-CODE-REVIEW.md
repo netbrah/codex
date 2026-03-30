@@ -167,7 +167,7 @@ The `WireApi` enum now has two variants but several `match` expressions use `==`
 #### 16. E2E tests are gated behind `CODEX_PROXY_E2E=1` with hardcoded NetApp proxy URL
 
 ```rust
-const PROXY_BASE_URL: &str = "https://llm-proxy-api.ai.eng.netapp.com/v1";
+const PROXY_BASE_URL: &str = "https://<your-llm-proxy>/v1";  // ← hardcoded; move to env var
 ```
 
 This URL is specific to NetApp's internal infrastructure. If this branch is intended for upstream, the URL should be configurable via environment variable.
