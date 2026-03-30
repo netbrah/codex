@@ -690,3 +690,126 @@ async fn messages_stop_sequences_end_to_end() -> Result<()> {
     );
     Ok(())
 }
+
+// ── T-6-A: stop_sequences serialization ──────────────────────────────
+
+/// Transport that captures the request body JSON for assertion.
+#[derive(Clone)]
+struct CapturingTransport {
+    captured_body: std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>,
+    response_body: String,
+}
+
+impl CapturingTransport {
+    fn new(response_body: String) -> Self {
+        Self {
+            captured_body: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            response_body,
+        }
+    }
+
+    fn captured_body(&self) -> serde_json::Value {
+        self.captured_body
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("no request was captured")
+    }
+}
+
+#[async_trait]
+impl HttpTransport for CapturingTransport {
+    async fn execute(&self, _req: Request) -> Result<Response, TransportError> {
+        Err(TransportError::Build("execute should not run".to_string()))
+    }
+
+    async fn stream(&self, req: Request) -> Result<StreamResponse, TransportError> {
+        if let Some(body) = req.body {
+            *self.captured_body.lock().unwrap() = Some(body);
+        }
+        let stream = futures::stream::iter(vec![Ok::<Bytes, TransportError>(Bytes::from(
+            self.response_body.clone(),
+        ))]);
+        Ok(StreamResponse {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            bytes: Box::pin(stream),
+        })
+    }
+}
+
+fn minimal_sse_response() -> String {
+    [
+        r#"data: {"type":"message_start","message":{"id":"msg_cap","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":1,"output_tokens":0}}}"#,
+        "",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#,
+        "",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+        "",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+    ]
+    .join("\n")
+}
+
+#[tokio::test]
+async fn stop_sequences_serialized_in_request() -> Result<()> {
+    let request = MessagesApiRequest {
+        stop_sequences: Some(vec!["STOP".to_string(), "</s>".to_string()]),
+        ..simple_request()
+    };
+    let transport = CapturingTransport::new(minimal_sse_response());
+    let client = MessagesClient::new(transport.clone(), provider(), NoAuth);
+    let _ = client
+        .stream_request(request, HeaderMap::new())
+        .await?;
+    let body = transport.captured_body();
+    let seqs = body["stop_sequences"]
+        .as_array()
+        .expect("stop_sequences in body");
+    assert_eq!(seqs[0], "STOP");
+    assert_eq!(seqs[1], "</s>");
+    Ok(())
+}
+
+#[tokio::test]
+async fn stop_sequences_absent_when_none() -> Result<()> {
+    let request = MessagesApiRequest {
+        stop_sequences: None,
+        ..simple_request()
+    };
+    let transport = CapturingTransport::new(minimal_sse_response());
+    let client = MessagesClient::new(transport.clone(), provider(), NoAuth);
+    let _ = client
+        .stream_request(request, HeaderMap::new())
+        .await?;
+    let body = transport.captured_body();
+    assert!(
+        body.get("stop_sequences").is_none(),
+        "stop_sequences must be absent from JSON when None"
+    );
+    Ok(())
+}
+
+// ── T-6-B: adaptive thinking serialization ───────────────────────────
+
+#[tokio::test]
+async fn thinking_adaptive_serialized_in_request() -> Result<()> {
+    let request = MessagesApiRequest {
+        thinking: Some(json!({"type": "adaptive"})),
+        max_tokens: 128_000,
+        ..simple_request()
+    };
+    let transport = CapturingTransport::new(minimal_sse_response());
+    let client = MessagesClient::new(transport.clone(), provider(), NoAuth);
+    let _ = client
+        .stream_request(request, HeaderMap::new())
+        .await?;
+    let body = transport.captured_body();
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    Ok(())
+}

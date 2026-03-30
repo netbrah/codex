@@ -1367,4 +1367,155 @@ mod tests {
         }
         assert!(found, "must find Completed with stop_reason=stop_sequence");
     }
+
+    // ── T-3-A: idle timeout fires ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_incomplete_stream_emits_error() {
+        // Stream that starts with message_start but ends without message_stop.
+        // Should emit a stream-closed error (either timeout or premature close).
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_t","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":1,"output_tokens":0}}}"#,
+            "",
+            // No further events — stream ends prematurely
+        ];
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_millis(50));
+        let mut rx = response_stream.rx_event;
+        let mut got_error = false;
+        while let Some(event) = rx.recv().await {
+            if let Err(_) = event {
+                got_error = true;
+            }
+        }
+        assert!(got_error, "incomplete stream should emit an error");
+    }
+
+    // ── T-3-B: error event from API ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_error_event_overloaded_standalone() {
+        // Error event without preceding message_start — should still propagate.
+        let fixture = vec![
+            r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Anthropic API temporarily overloaded"}}"#,
+            "",
+        ];
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(5));
+        let mut rx = response_stream.rx_event;
+        let mut found_error = false;
+        while let Some(event) = rx.recv().await {
+            if let Err(ApiError::ServerOverloaded) = event {
+                found_error = true;
+            }
+        }
+        assert!(found_error, "overloaded error should be propagated as ApiError::ServerOverloaded");
+    }
+
+    // ── T-3-C: malformed JSON SSE data skipped ─────────────────────────
+
+    #[tokio::test]
+    async fn test_malformed_sse_data_skipped() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_m","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":1,"output_tokens":0}}}"#,
+            "",
+            "data: this is not json at all {{{{",
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"recovered"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(5));
+        let mut rx = response_stream.rx_event;
+        let mut completed = false;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, Ok(ResponseEvent::Completed { .. })) {
+                completed = true;
+            }
+        }
+        assert!(
+            completed,
+            "stream should complete despite malformed intermediate events"
+        );
+    }
+
+    // ── T-3-D: thinking + tool_use interleaved ─────────────────────────
+
+    #[tokio::test]
+    async fn test_thinking_then_tool_use_interleaved() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_it","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I need a shell command"}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"SIG="}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_it1","name":"shell","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\": \"ls\"}"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":1}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":15}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(10));
+        let mut rx = response_stream.rx_event;
+        let mut events: Vec<Result<ResponseEvent, _>> = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+
+        // Must have Reasoning OutputItemDone
+        let has_reasoning = events.iter().any(|e| {
+            matches!(
+                e,
+                Ok(ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. }))
+            )
+        });
+        assert!(has_reasoning, "must emit Reasoning OutputItemDone");
+
+        // Must have FunctionCall OutputItemDone with correct call_id
+        let has_tool = events.iter().any(|e| {
+            matches!(
+                e,
+                Ok(ResponseEvent::OutputItemDone(ResponseItem::FunctionCall { call_id, .. }))
+                if call_id == "toolu_it1"
+            )
+        });
+        assert!(has_tool, "must emit FunctionCall OutputItemDone with call_id=toolu_it1");
+
+        // Reasoning must precede tool in event order
+        let reasoning_idx = events.iter().position(|e| {
+            matches!(
+                e,
+                Ok(ResponseEvent::OutputItemDone(ResponseItem::Reasoning { .. }))
+            )
+        });
+        let tool_idx = events.iter().position(|e| {
+            matches!(
+                e,
+                Ok(ResponseEvent::OutputItemDone(ResponseItem::FunctionCall { .. }))
+            )
+        });
+        assert!(
+            reasoning_idx < tool_idx,
+            "thinking must complete before tool_use"
+        );
+    }
 }
