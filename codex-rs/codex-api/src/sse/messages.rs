@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::debug;
 use tracing::trace;
+use tracing::warn;
 
 use crate::common::ResponseStream;
 
@@ -95,6 +96,7 @@ async fn process_messages_sse(
     let mut response_id = String::new();
     let mut usage_holder: Option<AnthropicUsage> = None;
     let mut stop_reason: Option<String> = None;
+    let mut tool_use_truncated = false;
 
     loop {
         let response = timeout(idle_timeout, sse_stream.next()).await;
@@ -345,6 +347,21 @@ async fn process_messages_sse(
                             name,
                             arguments,
                         }) => {
+                            // S-004: Detect truncated tool call arguments.
+                            // If the provider silently truncated output, the JSON
+                            // will be incomplete. Flag it so message_stop can
+                            // override stop_reason to "max_tokens" for retry.
+                            if !arguments.is_empty()
+                                && serde_json::from_str::<serde_json::Value>(&arguments).is_err()
+                            {
+                                warn!(
+                                    call_id = %call_id,
+                                    name = %name,
+                                    args_len = arguments.len(),
+                                    "truncated tool_use arguments detected (invalid JSON)"
+                                );
+                                tool_use_truncated = true;
+                            }
                             let item = ResponseItem::FunctionCall {
                                 id: None,
                                 name,
@@ -462,6 +479,36 @@ async fn process_messages_sse(
             }
 
             "message_stop" => {
+                // S-004: Check for any tool_use blocks still in the tracker
+                // (blocks that never received content_block_stop — hard truncation).
+                for (_, state) in &tracker.blocks {
+                    if let BlockState::ToolUse {
+                        call_id,
+                        name,
+                        arguments,
+                    } = state
+                    {
+                        if !arguments.is_empty()
+                            && serde_json::from_str::<serde_json::Value>(arguments).is_err()
+                        {
+                            warn!(
+                                call_id = %call_id,
+                                name = %name,
+                                args_len = arguments.len(),
+                                "in-flight tool_use block has truncated arguments at message_stop"
+                            );
+                            tool_use_truncated = true;
+                        }
+                    }
+                }
+
+                // S-004: If any tool_use block had invalid JSON arguments,
+                // override stop_reason to "max_tokens" so the harness retries.
+                if tool_use_truncated {
+                    warn!("overriding stop_reason to max_tokens due to truncated tool_use arguments");
+                    stop_reason = Some("max_tokens".to_owned());
+                }
+
                 let token_usage = usage_holder.map(|u| {
                     let input = u.input_tokens.unwrap_or(0);
                     let output = u.output_tokens.unwrap_or(0);
@@ -1517,5 +1564,233 @@ mod tests {
             reasoning_idx < tool_idx,
             "thinking must complete before tool_use"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // S-004: Tool call truncation detection tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// S-004-T1: Complete tool_use JSON → no truncation signal.
+    /// stop_reason must remain "tool_use" (not overridden to "max_tokens").
+    #[tokio::test]
+    async fn test_s004_complete_tool_use_no_truncation() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_ok","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_ok","name":"shell","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"ls -la\"}"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(10));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(
+                    stop_reason.as_deref(),
+                    Some("tool_use"),
+                    "complete tool_use JSON must NOT override stop_reason"
+                );
+                found = true;
+            }
+        }
+        assert!(found, "must emit Completed event");
+    }
+
+    /// S-004-T2: Incomplete tool_use JSON (truncated mid-object) → truncation detected.
+    /// stop_reason must be overridden to "max_tokens".
+    #[tokio::test]
+    async fn test_s004_truncated_tool_use_signals_max_tokens() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_trunc","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_trunc","name":"shell","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"ls -la"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(10));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(
+                    stop_reason.as_deref(),
+                    Some("max_tokens"),
+                    "truncated tool_use JSON must override stop_reason to max_tokens"
+                );
+                found = true;
+            }
+        }
+        assert!(found, "must emit Completed event");
+    }
+
+    /// S-004-T3: Multiple tool_use blocks, one truncated → truncation detected.
+    /// Even if the first tool_use is valid, a second truncated one must trigger.
+    #[tokio::test]
+    async fn test_s004_multiple_tool_use_one_truncated() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_multi","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_good","name":"read_file","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"/tmp/a\"}"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_bad","name":"write_file","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"/tmp/b\", \"content\": \"hel"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":1}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":30}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(10));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(
+                    stop_reason.as_deref(),
+                    Some("max_tokens"),
+                    "one truncated tool_use among many must override stop_reason"
+                );
+                found = true;
+            }
+        }
+        assert!(found, "must emit Completed event");
+    }
+
+    /// S-004-T4: Tool_use with empty arguments → handled gracefully (no truncation).
+    /// Empty arguments are legitimate (tool with no params).
+    #[tokio::test]
+    async fn test_s004_empty_arguments_no_truncation() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_empty","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_empty","name":"get_status","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(10));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(
+                    stop_reason.as_deref(),
+                    Some("tool_use"),
+                    "empty arguments must NOT be treated as truncation"
+                );
+                found = true;
+            }
+        }
+        assert!(found, "must emit Completed event");
+    }
+
+    /// S-004-T5: Hard truncation — tool_use block never receives content_block_stop.
+    /// The block stays in the tracker and must be caught at message_stop.
+    #[tokio::test]
+    async fn test_s004_in_flight_tool_use_at_message_stop() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_inflight","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_inflight","name":"shell","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":"}}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(10));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(
+                    stop_reason.as_deref(),
+                    Some("max_tokens"),
+                    "in-flight truncated tool_use must override stop_reason at message_stop"
+                );
+                found = true;
+            }
+        }
+        assert!(found, "must emit Completed event");
+    }
+
+    /// S-004-T6: Tool_use with valid JSON arguments "{}" → no truncation.
+    /// Minimal valid JSON object should pass validation.
+    #[tokio::test]
+    async fn test_s004_minimal_valid_json_no_truncation() {
+        let fixture = vec![
+            r#"data: {"type":"message_start","message":{"id":"msg_minimal","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_min","name":"ping","input":{}}}"#,
+            "",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}"#,
+            "",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}"#,
+            "",
+            r#"data: {"type":"message_stop"}"#,
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(10));
+        let mut rx = response_stream.rx_event;
+
+        let mut found = false;
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::Completed { stop_reason, .. }) = event {
+                assert_eq!(
+                    stop_reason.as_deref(),
+                    Some("tool_use"),
+                    "valid JSON {{}} must NOT trigger truncation"
+                );
+                found = true;
+            }
+        }
+        assert!(found, "must emit Completed event");
     }
 }
