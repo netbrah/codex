@@ -93,3 +93,9 @@ __pycache__/
 *.pyc
 
 api-reference
+
+# MCP config (may contain auth tokens)
+.mcp.json
+
+# developer-local build symlink
+codex-rs/target_shared

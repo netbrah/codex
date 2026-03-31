@@ -3,7 +3,7 @@
 Fork of OpenAI Codex (Rust) with native Anthropic `/messages` wire protocol.
 Primary branch: `dev`. Upstream: `upstream/main` (openai/codex).
 
-Proprietary layer (`feat/xli-embed-assets`) adds NetApp deploy scripts and corp
+Proprietary layer (`feat/embed-assets`) adds deploy scripts and corp
 proxy config on top of this branch. Read that branch's CLAUDE.md for corp context.
 This file covers dev-branch workflow only.
 
@@ -38,7 +38,7 @@ cargo run -p codex-core --bin codex-write-config-schema
 ```
 
 **Test mandate**: every change needs tests — unit tests, regression guards,
-CapturingTransport for request body assertions. See `feat/xli-embed-assets`
+CapturingTransport for request body assertions. See `feat/embed-assets`
 CLAUDE.md §Test Patterns for full skeletons.
 
 ---
@@ -56,8 +56,8 @@ export CODEX_LLM_PROXY_KEY="<your-key>"          # or ANTHROPIC_API_KEY
 export CODEX_PROXY_BASE_URL="<your-endpoint>"     # or ANTHROPIC_BASE_URL
 ```
 
-For the NetApp proxy specifically, set `CODEX_PROXY_BASE_URL` to the corp URL
-(documented in `feat/xli-embed-assets` CLAUDE.md — not here).
+For a corp proxy, set `CODEX_PROXY_BASE_URL` to the proxy URL
+(documented in the proprietary branch's CLAUDE.md — not here).
 
 ### Run live e2e tests
 
@@ -126,7 +126,7 @@ config (WireApi::Messages) → client.rs (stream_messages_api, line ~1159)
 ## Proprietary Layer
 
 Proprietary content (corp proxy URL, deploy scripts, ONTAP skills) lives ONLY on
-`feat/xli-embed-assets`. Never commit corp-specific content to `dev`.
+`feat/embed-assets`. Never commit corp-specific content to `dev`.
 
 If you need the corp proxy URL, env var values, or full test instructions, read
-`feat/xli-embed-assets` CLAUDE.md.
+`feat/embed-assets` CLAUDE.md.

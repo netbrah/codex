@@ -1,14 +1,14 @@
-# Codex CLI (XLI) — Cursor Spoke Rules
+# Codex CLI — Cursor Spoke Rules
 
 ## Role
-You are working on the Rust universal CLI agent harness (codename XLI). This is a fork of OpenAI Codex with a novel Anthropic /messages wire protocol implementation.
+You are working on the Rust universal CLI agent harness. This is a fork of OpenAI Codex with a novel Anthropic /messages wire protocol implementation.
 
 ## Why This Matters
-XLI is one of two universal harnesses in a cross-wire CLI agent project. Traditional agents (Codex, Claude Code, Gemini CLI) are monolithic — one wire, one model. XLI speaks both /responses (native) and /messages (our addition), so it can drive Claude, GPT, and eventually Gemini from the same Rust binary. The /messages wire is the novel engineering: 3,459 lines translating between Codex's ResponseItem[] lingua franca and Anthropic's message format.
+This is one of two universal harnesses in a cross-wire CLI agent project. Traditional agents (Codex, Claude Code, Gemini CLI) are monolithic — one wire, one model. This harness speaks both /responses (native) and /messages (our addition), so it can drive Claude, GPT, and eventually Gemini from the same Rust binary. The /messages wire is the novel engineering: 3,459 lines translating between Codex's ResponseItem[] lingua franca and Anthropic's message format.
 
-Your work here — whether closing null-space gaps, porting features from the TS harness (Apex), or improving the harness — directly expands what models this harness can drive and how well.
+Your work here — whether closing null-space gaps, porting features from the TS harness, or improving the harness — directly expands what models this harness can drive and how well.
 
-**Two tiers**: Features you build here land on the PUBLIC tier (netbrah GitHub). The proprietary tier (NetApp XLI) is just the binary built from this branch + deployment configs in `cli-ops/deploy/xli/`.
+**Two tiers**: Features you build here land on the PUBLIC tier (GitHub). The proprietary tier is the binary built from this branch + deployment configs in `cli-ops/deploy/`.
 
 ## Orientation
 1. Check current branch: `git branch --show-current`
@@ -65,4 +65,4 @@ Coordination hub: `~/Projects/cli-ops/`
 - Null-space master: `~/Projects/cli-ops/docs/null-space-ops/MASTER.md`
 - Wire audit: `~/Projects/cli-ops/docs/null-space-ops/reference/wire-audit-xli.md`
 - Objectives & KPIs: `~/Projects/cli-ops/docs/04-OBJECTIVES-AND-KPIs.md`
-- Ops runbook: `~/Projects/cli-ops/docs/05-RUNBOOK.md` (RB-3: sortie cycle, RB-5: XLI build)
+- Ops runbook: `~/Projects/cli-ops/docs/05-RUNBOOK.md` (RB-3: sortie cycle, RB-5: codex build)

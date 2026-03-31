@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# XLI Phase 4 — Live Smoke Test against NetApp LiteLLM Proxy
+# Live Smoke Test against LiteLLM Proxy
 #
 # Run OUTSIDE Cursor sandbox (Terminal.app or iTerm):
 #   cd ~/Projects/codex-cli/codex-rs
 #   CODEX_PROXY_E2E=1 bash tests/messages_live_smoke.sh
 #
 # Prerequisites:
-#   - CODEX_LLM_PROXY_KEY set (user=palanisd&key=sk_...)
+#   - CODEX_LLM_PROXY_KEY set
 #   - Binary built: cargo build -p codex-cli
 #
 # Runs 3 tests:
@@ -52,10 +52,10 @@ run_codex() {
         "$prompt" 2>&1 || true
 }
 
-echo "=== XLI /messages Live Smoke Test ==="
+echo "=== /messages Live Smoke Test ==="
 echo "Binary: $BINARY"
 echo "Model:  $MODEL"
-echo "Proxy:  NetApp LiteLLM"
+echo "Proxy:  ${CODEX_PROXY_BASE_URL:-LiteLLM}"
 echo ""
 
 # ─── Test 1: Text-only ───
