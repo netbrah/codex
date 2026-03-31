@@ -215,6 +215,13 @@ export XLI_HOME=/custom/path
 node --test deploy/npm/test/test-home-isolation.mjs
 ```
 
+### Branding (S-040)
+
+- `xli --version` prints `xli <version>` (intercepted before binary spawn)
+- Cyan ASCII banner on interactive launch (suppress with `--quiet`)
+- No Rust engine changes — all branding is in the launcher shim
+
+
 ### Rebase Procedure
 
 ```bash

@@ -78,6 +78,22 @@ CODEX_HOME=/tmp/my-codex node deploy/npm/bin/xli.js --help
 node --test deploy/npm/test/test-home-isolation.mjs
 ```
 
+### Branding Surfaces
+
+The XLI launcher (`deploy/npm/bin/xli.js`) provides these branding
+surfaces without any Rust engine changes:
+
+| Surface | How | Suppression |
+|---------|-----|-------------|
+| ASCII banner (cyan) | Printed to stderr on interactive launch | `--quiet` or `-q` |
+| `--version` / `-V` | Intercepted by launcher, prints `xli <version>` | — |
+| Terminal title | Driven by `CODEX_APP_NAME` env (future) | — |
+| Welcome screen text | Would require engine change | N/A (deferred) |
+
+The banner only appears when both stdin and stdout are TTYs and no
+prompt argument is provided (i.e., the operator typed bare `xli`).
+
+
 ---
 
 ## Proxy Configuration

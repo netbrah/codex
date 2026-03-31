@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // XLI — Cross-LLM Interface
-// Thin shim that spawns the compiled Rust binary.
+// Thin shim that spawns the compiled Rust binary with XLI branding.
 //
 // Home isolation: XLI defaults runtime state to ~/.xli so it never
 // collides with stock Codex ~/.codex installs.
@@ -11,13 +11,32 @@
 //                engine writes under ~/.xli transparently.
 
 import { spawn } from "node:child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import os from "os";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── Package metadata ────────────────────────────────────────────────
+const PKG_JSON = path.join(__dirname, "..", "package.json");
+let PKG_VERSION = "0.1.0";
+try {
+  const pkg = JSON.parse(readFileSync(PKG_JSON, "utf8"));
+  PKG_VERSION = pkg.version || PKG_VERSION;
+} catch {}
+
+// ── Branding ────────────────────────────────────────────────────────
+const XLI_BANNER = `
+\x1b[36m  ██╗  ██╗██╗     ██╗\x1b[0m
+\x1b[36m  ╚██╗██╔╝██║     ██║\x1b[0m
+\x1b[36m   ╚███╔╝ ██║     ██║\x1b[0m
+\x1b[36m   ██╔██╗ ██║     ██║\x1b[0m
+\x1b[36m  ██╔╝ ██╗███████╗██║\x1b[0m
+\x1b[36m  ╚═╝  ╚═╝╚══════╝╚═╝\x1b[0m
+\x1b[2m  Cross-LLM Interface v${PKG_VERSION}\x1b[0m
+`;
 
 // ── Home isolation ──────────────────────────────────────────────────
 const homeDir = os.homedir();
@@ -32,6 +51,24 @@ const childEnv = { ...process.env, XLI_HOME };
 // store its state under ~/.xli without any engine changes.
 if (!process.env.CODEX_HOME) {
   childEnv.CODEX_HOME = XLI_HOME;
+}
+// ────────────────────────────────────────────────────────────────────
+
+// ── Version intercept ───────────────────────────────────────────────
+const args = process.argv.slice(2);
+if (args.includes("--version") || args.includes("-V")) {
+  console.log(`xli ${PKG_VERSION}`);
+  process.exit(0);
+}
+
+// ── Banner (interactive sessions only) ──────────────────────────────
+// Show the XLI banner when launching interactively with no prompt arg
+// (i.e., the user just typed `xli` to start a session).
+const isInteractive = process.stdin.isTTY && process.stdout.isTTY;
+const hasPrompt = args.length > 0 && !args[0].startsWith("-");
+const suppressBanner = args.includes("--quiet") || args.includes("-q");
+if (isInteractive && !hasPrompt && !suppressBanner) {
+  process.stderr.write(XLI_BANNER + "\n");
 }
 // ────────────────────────────────────────────────────────────────────
 
@@ -56,7 +93,7 @@ if (!existsSync(binaryPath)) {
   process.exit(1);
 }
 
-const child = spawn(binaryPath, process.argv.slice(2), {
+const child = spawn(binaryPath, args, {
   stdio: "inherit",
   env: childEnv,
 });

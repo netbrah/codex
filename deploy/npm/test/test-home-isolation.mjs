@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-// S-040 — XLI Home Isolation acceptance tests
+// S-040 — XLI Home Isolation + Branding acceptance tests
 //
-// Exercises the env-bridging logic from xli.js without spawning the
-// Rust binary.  We import the resolver logic inline (it's tiny) so
-// we can assert against every acceptance case from the dispatch
-// checklist.
+// Exercises the env-bridging logic and branding features from xli.js
+// without spawning the Rust binary.
 
 import os from "os";
 import path from "path";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const XLI_JS = path.join(__dirname, "..", "bin", "xli.js");
 
 /**
  * Replicate the env-bridging logic from xli.js so we can unit-test
@@ -25,7 +28,7 @@ function resolveXliEnv(processEnv) {
   return childEnv;
 }
 
-// ── Test cases from S-040 dispatch checklist ────────────────────────
+// ── Home Isolation Tests ────────────────────────────────────────────
 
 describe("S-040 Home Isolation", () => {
   const home = os.homedir();
@@ -69,5 +72,32 @@ describe("S-040 Home Isolation", () => {
       env.XLI_HOME.endsWith(".xli"),
       `XLI_HOME should end with .xli, got: ${env.XLI_HOME}`
     );
+  });
+});
+
+// ── Branding Tests ──────────────────────────────────────────────────
+
+describe("S-040 Branding", () => {
+  it("--version prints xli version", () => {
+    const out = execFileSync("node", [XLI_JS, "--version"], {
+      encoding: "utf8",
+    }).trim();
+    assert.match(out, /^xli \d+\.\d+\.\d+$/);
+    assert.ok(!out.includes("codex"), "--version should say xli, not codex");
+  });
+
+  it("-V prints xli version", () => {
+    const out = execFileSync("node", [XLI_JS, "-V"], {
+      encoding: "utf8",
+    }).trim();
+    assert.match(out, /^xli \d+\.\d+\.\d+$/);
+  });
+
+  it("--version reads version from package.json", () => {
+    const out = execFileSync("node", [XLI_JS, "--version"], {
+      encoding: "utf8",
+    }).trim();
+    // Should contain the version from package.json
+    assert.ok(out.includes("0.1.0"), `Expected 0.1.0 in: ${out}`);
   });
 });
