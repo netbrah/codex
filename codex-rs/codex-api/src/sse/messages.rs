@@ -278,13 +278,15 @@ async fn process_messages_sse(
                                         tracker.blocks.get_mut(&index)
                                     {
                                         acc.push_str(text);
-                                    }
-                                    if tx_event
-                                        .send(Ok(ResponseEvent::OutputTextDelta(text.to_owned())))
-                                        .await
-                                        .is_err()
-                                    {
-                                        return;
+                                        if tx_event
+                                            .send(Ok(ResponseEvent::OutputTextDelta(
+                                                text.to_owned(),
+                                            )))
+                                            .await
+                                            .is_err()
+                                        {
+                                            return;
+                                        }
                                     }
                                 }
                             }
@@ -296,16 +298,16 @@ async fn process_messages_sse(
                                         tracker.blocks.get_mut(&index)
                                     {
                                         acc.push_str(thinking);
-                                    }
-                                    if tx_event
-                                        .send(Ok(ResponseEvent::ReasoningContentDelta {
-                                            delta: thinking.to_owned(),
-                                            content_index: index as i64,
-                                        }))
-                                        .await
-                                        .is_err()
-                                    {
-                                        return;
+                                        if tx_event
+                                            .send(Ok(ResponseEvent::ReasoningContentDelta {
+                                                delta: thinking.to_owned(),
+                                                content_index: index as i64,
+                                            }))
+                                            .await
+                                            .is_err()
+                                        {
+                                            return;
+                                        }
                                     }
                                 }
                             }
@@ -1516,6 +1518,132 @@ mod tests {
         assert!(
             reasoning_idx < tool_idx,
             "thinking must complete before tool_use"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_text_delta_gated_on_tracked_block_index() {
+        // text_delta at index 0 is tracked (content_block_start precedes it),
+        // text_delta at index 99 is untracked (no content_block_start) and must NOT emit.
+        let fixture = vec![
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_gate\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}",
+            "",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+            "",
+            // Tracked: index 0 has a content_block_start
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"tracked\"}}",
+            "",
+            // Untracked: index 99 has no content_block_start
+            "data: {\"type\":\"content_block_delta\",\"index\":99,\"delta\":{\"type\":\"text_delta\",\"text\":\"untracked\"}}",
+            "",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}",
+            "",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}",
+            "",
+            "data: {\"type\":\"message_stop\"}",
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut text_deltas: Vec<String> = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::OutputTextDelta(t)) = event {
+                text_deltas.push(t);
+            }
+        }
+
+        assert_eq!(
+            text_deltas,
+            vec!["tracked".to_string()],
+            "only text_delta with a tracked block index should be emitted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_thinking_delta_gated_on_tracked_block_index() {
+        // thinking_delta at index 0 is tracked, thinking_delta at index 99 is not.
+        let fixture = vec![
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_tgate\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}",
+            "",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}",
+            "",
+            // Tracked: index 0
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"tracked thinking\"}}",
+            "",
+            // Untracked: index 99
+            "data: {\"type\":\"content_block_delta\",\"index\":99,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"untracked thinking\"}}",
+            "",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_test\"}}",
+            "",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}",
+            "",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}",
+            "",
+            "data: {\"type\":\"message_stop\"}",
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut thinking_deltas: Vec<String> = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::ReasoningContentDelta { delta, .. }) = event {
+                thinking_deltas.push(delta);
+            }
+        }
+
+        assert_eq!(
+            thinking_deltas,
+            vec!["tracked thinking".to_string()],
+            "only thinking_delta with a tracked block index should be emitted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_input_json_delta_gated_on_tracked_block_index() {
+        // input_json_delta only accumulates into tracked blocks; untracked indices
+        // should not affect the final tool arguments.
+        let fixture = vec![
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_jgate\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4.6\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}",
+            "",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_gate\",\"name\":\"shell\",\"input\":{}}}",
+            "",
+            // Tracked: index 0
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\": \\\"ls\\\"}\"}}",
+            "",
+            // Untracked: index 99 — should be silently ignored
+            "data: {\"type\":\"content_block_delta\",\"index\":99,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"bad\\\": true}\"}}",
+            "",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}",
+            "",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}",
+            "",
+            "data: {\"type\":\"message_stop\"}",
+            "",
+        ];
+
+        let stream = fixture_to_byte_stream(&fixture);
+        let response_stream = spawn_messages_stream(stream, Duration::from_secs(30));
+        let mut rx = response_stream.rx_event;
+
+        let mut tool_args = String::new();
+        while let Some(event) = rx.recv().await {
+            if let Ok(ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+                arguments, ..
+            })) = event
+            {
+                tool_args = arguments;
+            }
+        }
+
+        assert_eq!(
+            tool_args, "{\"cmd\": \"ls\"}",
+            "only input_json_delta with a tracked block index should accumulate"
         );
     }
 }
