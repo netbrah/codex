@@ -21,6 +21,8 @@ fn test_model_client(session_source: SessionSource) -> ModelClient {
         provider,
         session_source,
         /*model_verbosity*/ None,
+        /*tool_choice*/ None,
+        /*messages_metadata_user_id*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
