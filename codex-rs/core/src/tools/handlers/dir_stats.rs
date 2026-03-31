@@ -90,19 +90,6 @@ pub fn estimate_scope_file_count(stats: &DirStats, scope: &Path) -> usize {
     stats.get(scope).copied().unwrap_or(0)
 }
 
-/// Returns the `n` direct child directories of `scope` with the highest
-/// recursive file counts, sorted descending by count.
-pub fn top_subdirs(stats: &DirStats, scope: &Path, n: usize) -> Vec<(PathBuf, usize)> {
-    let mut direct_children: Vec<(PathBuf, usize)> = stats
-        .iter()
-        .filter(|(path, _)| path.parent() == Some(scope))
-        .map(|(path, &count)| (path.clone(), count))
-        .collect();
-    direct_children.sort_by(|a, b| b.1.cmp(&a.1));
-    direct_children.truncate(n);
-    direct_children
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
