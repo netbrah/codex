@@ -128,7 +128,7 @@ fn live_messages_shell_tool_call() {
     }
 
     let result = run_messages_exec(
-        "Use the shell tool to run 'echo XLI_LIVE_MSG_TEST'. Report what it printed.",
+        "Use the shell tool to run 'echo CODEX_LIVE_MSG_TEST'. Report what it printed.",
     );
     assert_eq!(
         result.exit_code, 0,
@@ -136,7 +136,7 @@ fn live_messages_shell_tool_call() {
         result.stderr
     );
     assert!(
-        result.stdout.contains("XLI_LIVE_MSG_TEST"),
+        result.stdout.contains("CODEX_LIVE_MSG_TEST"),
         "should contain tool output\nstdout: {}",
         result.stdout
     );

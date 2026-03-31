@@ -1,4 +1,4 @@
-//! Regression guards for the XLI /messages wire additions.
+//! Regression guards for the /messages wire additions.
 //!
 //! If any test in this module fails to COMPILE, it means an upstream merge
 //! deleted a type or function that our Messages wire depends on. Check the
