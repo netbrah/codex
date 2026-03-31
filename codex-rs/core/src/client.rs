@@ -105,6 +105,7 @@ use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
 use crate::messages_wire::conversation_to_anthropic_messages;
+use codex_protocol::openai_models::InputModality;
 use crate::messages_wire::extract_developer_blocks;
 use crate::messages_wire::tools_to_anthropic_format;
 use crate::model_provider_info::ModelProviderInfo;
@@ -1191,7 +1192,10 @@ impl ModelClientSession {
                     .with_telemetry(Some(request_telemetry));
 
             let input = prompt.get_formatted_input();
-            let messages = conversation_to_anthropic_messages(&input);
+            let supports_image = model_info
+                .input_modalities
+                .contains(&InputModality::Image);
+            let messages = conversation_to_anthropic_messages(&input, supports_image);
             let anthropic_tools = tools_to_anthropic_format(&prompt.tools);
 
             // Build the system parameter: base_instructions + developer-role blocks.
