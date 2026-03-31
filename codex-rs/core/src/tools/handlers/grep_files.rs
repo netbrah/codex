@@ -14,6 +14,14 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
+use super::dir_stats::estimate_scope_file_count;
+use super::dir_stats::load_dir_stats;
+use super::dir_stats::top_subdirs;
+use super::search_rg::make_scope_tempfile;
+use super::workspace_index::IndexStatus;
+use super::workspace_index::WorkspaceIndexConfig;
+use super::workspace_index::ensure_index;
+
 pub struct GrepFilesHandler;
 
 const DEFAULT_LIMIT: usize = 100;
@@ -83,6 +91,43 @@ impl ToolHandler for GrepFilesHandler {
             }
         });
 
+        let config = WorkspaceIndexConfig::from_env();
+        let workspace_root = turn.cwd.clone();
+
+        match ensure_index(&workspace_root, &config) {
+            IndexStatus::Ready {
+                ref manifest_path,
+                ref dirstats_path,
+            } => {
+                if let Some(output) = try_index_search(
+                    pattern,
+                    include.as_deref(),
+                    &search_path,
+                    limit,
+                    &turn.cwd,
+                    manifest_path,
+                    dirstats_path,
+                    &config,
+                )
+                .await?
+                {
+                    return Ok(output);
+                }
+                // Fall through to legacy rg if index search produced no usable result.
+            }
+            IndexStatus::Building if search_path == workspace_root => {
+                return Ok(FunctionToolOutput::from_text(
+                    "Index is being built in background, please retry in a moment. \
+                     For now, please scope your search to a specific subdirectory."
+                        .to_string(),
+                    Some(false),
+                ));
+            }
+            IndexStatus::Building | IndexStatus::Stale | IndexStatus::Unavailable => {
+                // Fall through to legacy rg.
+            }
+        }
+
         let search_results =
             run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd).await?;
 
@@ -96,6 +141,109 @@ impl ToolHandler for GrepFilesHandler {
                 search_results.join("\n"),
                 Some(true),
             ))
+        }
+    }
+}
+
+/// Attempts to run the grep search using the pre-built manifest index.
+///
+/// Returns `Ok(Some(output))` on success, `Ok(None)` to fall back to the
+/// legacy `rg` path.
+async fn try_index_search(
+    pattern: &str,
+    include: Option<&str>,
+    search_path: &Path,
+    limit: usize,
+    cwd: &Path,
+    manifest_path: &Path,
+    dirstats_path: &Path,
+    config: &WorkspaceIndexConfig,
+) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
+    // Check whether the scope is too broad before spending time filtering.
+    if let Ok(stats) = load_dir_stats(dirstats_path) {
+        let scope_count = estimate_scope_file_count(&stats, search_path);
+        if scope_count > config.max_scope_files {
+            let top = top_subdirs(&stats, search_path, 5);
+            let suggestions = top
+                .iter()
+                .map(|(path, count)| format!("  {} ({count} files)", path.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Ok(Some(FunctionToolOutput::from_text(
+                format!(
+                    "Search scope is too broad ({scope_count} files). \
+                     Please narrow your search to a subdirectory. \
+                     Top subdirectories by file count:\n{suggestions}"
+                ),
+                Some(false),
+            )));
+        }
+    }
+
+    let tmp = match make_scope_tempfile(manifest_path, search_path) {
+        Some(t) => t,
+        None => return Ok(None),
+    };
+
+    let tmp_path = tmp.path().to_path_buf();
+    let results = run_rg_from_manifest(pattern, include, &tmp_path, limit, cwd).await?;
+    // Keep `tmp` alive until after rg reads the file.
+    drop(tmp);
+
+    if results.is_empty() {
+        Ok(Some(FunctionToolOutput::from_text(
+            "No matches found.".to_string(),
+            Some(false),
+        )))
+    } else {
+        Ok(Some(FunctionToolOutput::from_text(
+            results.join("\n"),
+            Some(true),
+        )))
+    }
+}
+
+async fn run_rg_from_manifest(
+    pattern: &str,
+    include: Option<&str>,
+    manifest_path: &Path,
+    limit: usize,
+    cwd: &Path,
+) -> Result<Vec<String>, FunctionCallError> {
+    let mut command = Command::new("rg");
+    command
+        .current_dir(cwd)
+        .arg("--files-with-matches")
+        .arg("--sortr=modified")
+        .arg("--regexp")
+        .arg(pattern)
+        .arg("--no-messages")
+        .arg("--files-from")
+        .arg(manifest_path);
+
+    if let Some(glob) = include {
+        command.arg("--glob").arg(glob);
+    }
+
+    let output = timeout(COMMAND_TIMEOUT, command.output())
+        .await
+        .map_err(|_| {
+            FunctionCallError::RespondToModel("rg timed out after 30 seconds".to_string())
+        })?
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to launch rg: {err}. Ensure ripgrep is installed and on PATH."
+            ))
+        })?;
+
+    match output.status.code() {
+        Some(0) => Ok(parse_results(&output.stdout, limit)),
+        Some(1) => Ok(Vec::new()),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(FunctionCallError::RespondToModel(format!(
+                "rg failed: {stderr}"
+            )))
         }
     }
 }
