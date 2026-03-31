@@ -1,12 +1,18 @@
 {
   "name": "@netapp/xli",
   "version": "0.1.0",
-  "description": "XLI — Cross-LLM Interface for ONTAP development",
+  "description": "XLI \u2014 Cross-LLM Interface for ONTAP development",
   "bin": {
     "xli": "bin/xli.js"
   },
-  "os": ["darwin", "linux"],
-  "cpu": ["arm64", "x64"],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
   "files": [
     "bin/",
     "vendor/"
@@ -16,5 +22,6 @@
   },
   "publishConfig": {
     "registry": "https://artifactory.corp.netapp.com/api/npm/npm-local/"
-  }
+  },
+  "type": "module"
 }

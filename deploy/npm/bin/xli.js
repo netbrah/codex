@@ -1,14 +1,39 @@
 #!/usr/bin/env node
 // XLI — Cross-LLM Interface
 // Thin shim that spawns the compiled Rust binary.
+//
+// Home isolation: XLI defaults runtime state to ~/.xli so it never
+// collides with stock Codex ~/.codex installs.
+//
+//   XLI_HOME  — override to relocate XLI state (default: ~/.xli)
+//   CODEX_HOME — if explicitly set, XLI honors it as-is.
+//                if unset, XLI bridges it to XLI_HOME so the Rust
+//                engine writes under ~/.xli transparently.
 
 import { spawn } from "node:child_process";
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import os from "os";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── Home isolation ──────────────────────────────────────────────────
+const homeDir = os.homedir();
+const XLI_HOME = process.env.XLI_HOME || path.join(homeDir, ".xli");
+
+// Build env for the child process.  Start with a shallow copy of the
+// current environment so we never mutate process.env itself.
+const childEnv = { ...process.env, XLI_HOME };
+
+// Bridge CODEX_HOME to XLI_HOME when the operator hasn't explicitly
+// set CODEX_HOME.  This makes the Rust engine (which reads CODEX_HOME)
+// store its state under ~/.xli without any engine changes.
+if (!process.env.CODEX_HOME) {
+  childEnv.CODEX_HOME = XLI_HOME;
+}
+// ────────────────────────────────────────────────────────────────────
 
 const TARGETS = {
   "darwin-arm64":  "aarch64-apple-darwin",
@@ -33,7 +58,7 @@ if (!existsSync(binaryPath)) {
 
 const child = spawn(binaryPath, process.argv.slice(2), {
   stdio: "inherit",
-  env: process.env,
+  env: childEnv,
 });
 
 ["SIGINT", "SIGTERM", "SIGHUP"].forEach((sig) => {

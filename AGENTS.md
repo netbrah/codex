@@ -38,6 +38,45 @@ feat/xli-embed-assets  <- YOU ARE HERE (NetApp XLI distribution)
 | `deploy/skills/ontap-dev-guide/` | ONTAP-specific skill |
 | `AGENTS.md` (this file) | Proprietary context + proxy config |
 | `CLAUDE.md` | Corp-specific agent instructions with proxy URLs |
+| `deploy/npm/test/` | Home isolation env-bridging tests (S-040) |
+
+---
+
+## Home Isolation (S-040)
+
+XLI defaults its runtime state to `~/.xli` so it never collides with
+stock Codex `~/.codex` installs.  The launcher (`deploy/npm/bin/xli.js`)
+bridges `CODEX_HOME` transparently — zero Rust engine changes required.
+
+| Env Var | Default | Effect |
+|---------|---------|--------|
+| `XLI_HOME` | `~/.xli` | Where XLI stores history, logs, config |
+| `CODEX_HOME` | (bridged to `XLI_HOME`) | If unset, auto-set to `XLI_HOME`; if explicitly set, preserved |
+
+### Behavior Matrix
+
+| `XLI_HOME` | `CODEX_HOME` | Effective `CODEX_HOME` |
+|------------|-------------|----------------------|
+| unset | unset | `~/.xli` |
+| `/custom/path` | unset | `/custom/path` |
+| unset | `/explicit/codex` | `/explicit/codex` |
+| `/custom/path` | `/explicit/codex` | `/explicit/codex` |
+
+### Quick Test
+
+```bash
+# Default — state goes to ~/.xli
+node deploy/npm/bin/xli.js --help
+
+# Override XLI_HOME
+XLI_HOME=/tmp/test-xli node deploy/npm/bin/xli.js --help
+
+# Explicit CODEX_HOME is preserved
+CODEX_HOME=/tmp/my-codex node deploy/npm/bin/xli.js --help
+
+# Run env-bridging unit tests
+node --test deploy/npm/test/test-home-isolation.mjs
+```
 
 ---
 

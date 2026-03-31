@@ -194,8 +194,26 @@ This branch (`feat/xli-embed-assets`) is a linear rebase stack on top of `dev`.
 | `deploy/skills/ontap-dev-guide/` | ONTAP-specific skill |
 | `AGENTS.md` | Proprietary inventory (this branch only) |
 | `CLAUDE.md` (this file) | Corp-specific instructions with proxy URLs |
+| `deploy/npm/test/` | Home isolation env-bridging tests (S-040) |
 
 **Never commit proprietary content to `dev`.** Proprietary = anything with corp URLs, internal paths, or NetApp branding.
+
+### Home Isolation (S-040)
+
+XLI defaults runtime state to `~/.xli` (not `~/.codex`).  The launcher
+(`deploy/npm/bin/xli.js`) sets `CODEX_HOME` to `XLI_HOME` when the
+operator hasn't explicitly set `CODEX_HOME`.
+
+```bash
+# Default state dir
+XLI_HOME=~/.xli          # auto-set if unset
+
+# To override:
+export XLI_HOME=/custom/path
+
+# Run env-bridging tests:
+node --test deploy/npm/test/test-home-isolation.mjs
+```
 
 ### Rebase Procedure
 

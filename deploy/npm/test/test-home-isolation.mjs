@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+// S-040 — XLI Home Isolation acceptance tests
+//
+// Exercises the env-bridging logic from xli.js without spawning the
+// Rust binary.  We import the resolver logic inline (it's tiny) so
+// we can assert against every acceptance case from the dispatch
+// checklist.
+
+import os from "os";
+import path from "path";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+/**
+ * Replicate the env-bridging logic from xli.js so we can unit-test
+ * it in isolation.  If the launcher logic changes, keep this in sync.
+ */
+function resolveXliEnv(processEnv) {
+  const homeDir = os.homedir();
+  const XLI_HOME = processEnv.XLI_HOME || path.join(homeDir, ".xli");
+  const childEnv = { ...processEnv, XLI_HOME };
+  if (!processEnv.CODEX_HOME) {
+    childEnv.CODEX_HOME = XLI_HOME;
+  }
+  return childEnv;
+}
+
+// ── Test cases from S-040 dispatch checklist ────────────────────────
+
+describe("S-040 Home Isolation", () => {
+  const home = os.homedir();
+
+  it("Case 1: both unset → defaults to ~/.xli", () => {
+    const env = resolveXliEnv({ HOME: home });
+    assert.equal(env.XLI_HOME, path.join(home, ".xli"));
+    assert.equal(env.CODEX_HOME, path.join(home, ".xli"));
+  });
+
+  it("Case 2: XLI_HOME set, CODEX_HOME unset → CODEX_HOME = XLI_HOME", () => {
+    const env = resolveXliEnv({ HOME: home, XLI_HOME: "/tmp/custom-xli" });
+    assert.equal(env.XLI_HOME, "/tmp/custom-xli");
+    assert.equal(env.CODEX_HOME, "/tmp/custom-xli");
+  });
+
+  it("Case 3: CODEX_HOME explicitly set → preserved", () => {
+    const env = resolveXliEnv({
+      HOME: home,
+      CODEX_HOME: "/opt/my-codex-home",
+    });
+    assert.equal(env.CODEX_HOME, "/opt/my-codex-home");
+    // XLI_HOME still defaults
+    assert.equal(env.XLI_HOME, path.join(home, ".xli"));
+  });
+
+  it("Case 4: both XLI_HOME and CODEX_HOME set → both preserved", () => {
+    const env = resolveXliEnv({
+      HOME: home,
+      XLI_HOME: "/tmp/xli-override",
+      CODEX_HOME: "/tmp/codex-override",
+    });
+    assert.equal(env.XLI_HOME, "/tmp/xli-override");
+    assert.equal(env.CODEX_HOME, "/tmp/codex-override");
+  });
+
+  it("XLI_HOME is always present in child env", () => {
+    const env = resolveXliEnv({});
+    assert.ok(env.XLI_HOME, "XLI_HOME must be set");
+    assert.ok(
+      env.XLI_HOME.endsWith(".xli"),
+      `XLI_HOME should end with .xli, got: ${env.XLI_HOME}`
+    );
+  });
+});
