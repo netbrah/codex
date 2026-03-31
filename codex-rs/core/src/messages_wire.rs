@@ -8,13 +8,76 @@ use codex_protocol::models::ResponseItem;
 use serde_json::Value;
 use serde_json::json;
 
+/// Removes orphaned tool calls and tool results from the conversation history.
+///
+/// An "orphaned" tool call is a `FunctionCall`, `LocalShellCall`, or
+/// `CustomToolCall` without a matching `FunctionCallOutput` /
+/// `CustomToolCallOutput` (matched by `call_id`), or vice-versa.
+///
+/// Sending unpaired `tool_use` / `tool_result` blocks to the Anthropic API
+/// causes a 400 error, so we strip them before translation.
+fn clean_orphaned_tool_calls(input: &[ResponseItem]) -> Vec<ResponseItem> {
+    use std::collections::HashSet;
+
+    // First pass: collect call_ids from tool calls and tool outputs.
+    let mut call_ids: HashSet<String> = HashSet::new();
+    let mut output_ids: HashSet<String> = HashSet::new();
+
+    for item in input {
+        match item {
+            ResponseItem::FunctionCall { call_id, .. } => {
+                call_ids.insert(call_id.clone());
+            }
+            ResponseItem::LocalShellCall { call_id, .. } => {
+                if let Some(id) = call_id {
+                    call_ids.insert(id.clone());
+                }
+                // None call_id → can never match an output → orphaned
+            }
+            ResponseItem::CustomToolCall { call_id, .. } => {
+                call_ids.insert(call_id.clone());
+            }
+            ResponseItem::FunctionCallOutput { call_id, .. } => {
+                output_ids.insert(call_id.clone());
+            }
+            ResponseItem::CustomToolCallOutput { call_id, .. } => {
+                output_ids.insert(call_id.clone());
+            }
+            _ => {}
+        }
+    }
+
+    // Paired ids: present in BOTH sets.
+    let paired: HashSet<&String> = call_ids.intersection(&output_ids).collect();
+
+    // Second pass: keep only paired tool items and all non-tool items.
+    input
+        .iter()
+        .filter(|item| match item {
+            ResponseItem::FunctionCall { call_id, .. } => paired.contains(call_id),
+            ResponseItem::LocalShellCall { call_id, .. } => {
+                call_id.as_ref().map_or(false, |id| paired.contains(id))
+            }
+            ResponseItem::CustomToolCall { call_id, .. } => paired.contains(call_id),
+            ResponseItem::FunctionCallOutput { call_id, .. } => paired.contains(call_id),
+            ResponseItem::CustomToolCallOutput { call_id, .. } => paired.contains(call_id),
+            _ => true,
+        })
+        .cloned()
+        .collect()
+}
+
 /// Translates the codex-rs conversation history (`&[ResponseItem]`) into
 /// Anthropic's `messages` array, extracting the system prompt from the first
 /// system-role message if present.
 pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<Value> {
+    // S-005: Strip orphaned tool calls/results before translation to prevent
+    // Anthropic API 400 errors from unpaired tool_use/tool_result blocks.
+    let cleaned = clean_orphaned_tool_calls(input);
+
     let mut messages: Vec<Value> = Vec::new();
 
-    for item in input {
+    for item in &cleaned {
         match item {
             ResponseItem::Message { role, content, .. } => {
                 let anthropic_role = match role.as_str() {
@@ -463,14 +526,20 @@ mod tests {
                 arguments: r#"{"path":"foo.txt"}"#.to_string(),
                 call_id: "toolu_02".to_string(),
             },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_01".to_string(),
+                output: FunctionCallOutputPayload::from_text("file1.txt".to_string()),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_02".to_string(),
+                output: FunctionCallOutputPayload::from_text("contents".to_string()),
+            },
         ];
 
         let messages = conversation_to_anthropic_messages(&input);
-        // S-014 guard appends a synthetic user message after trailing tool_use
-        assert_eq!(messages.len(), 2);
+        // Two consecutive assistant FunctionCalls should merge into one assistant message
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"].as_array().unwrap().len(), 2);
-        assert_eq!(messages[1]["role"], "user"); // synthetic guard
     }
 
     #[test]
@@ -765,21 +834,27 @@ mod tests {
         use codex_protocol::models::LocalShellExecAction;
         use codex_protocol::models::LocalShellStatus;
 
-        let input = vec![ResponseItem::LocalShellCall {
-            id: None,
-            call_id: Some("shell_01".to_string()),
-            status: LocalShellStatus::InProgress,
-            action: LocalShellAction::Exec(LocalShellExecAction {
-                command: vec!["ls".to_string(), "-la".to_string()],
-                timeout_ms: None,
-                working_directory: None,
-                env: None,
-                user: None,
-            }),
-        }];
+        let input = vec![
+            ResponseItem::LocalShellCall {
+                id: None,
+                call_id: Some("shell_01".to_string()),
+                status: LocalShellStatus::InProgress,
+                action: LocalShellAction::Exec(LocalShellExecAction {
+                    command: vec!["ls".to_string(), "-la".to_string()],
+                    timeout_ms: None,
+                    working_directory: None,
+                    env: None,
+                    user: None,
+                }),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "shell_01".to_string(),
+                output: FunctionCallOutputPayload::from_text("total 8\ndrwxr-xr-x".to_string()),
+            },
+        ];
 
         let messages = conversation_to_anthropic_messages(&input);
-        assert_eq!(messages.len(), 2); // S-014 guard appends synthetic user
+        assert_eq!(messages.len(), 2); // assistant + user(tool_result)
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"][0]["type"], "tool_use");
         assert_eq!(messages[0]["content"][0]["id"], "shell_01");
@@ -843,10 +918,14 @@ mod tests {
                 arguments: r#"{"command":"npm build"}"#.to_string(),
                 call_id: "toolu_01".to_string(),
             },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_01".to_string(),
+                output: FunctionCallOutputPayload::from_text("Build succeeded".to_string()),
+            },
         ];
 
         let messages = conversation_to_anthropic_messages(&input);
-        assert_eq!(messages.len(), 3); // user + assistant(thinking+tool_use) + S-014 guard
+        assert_eq!(messages.len(), 3); // user + assistant(thinking+tool_use) + user(tool_result)
         assert_eq!(messages[0]["role"], "user");
 
         let assistant_content = messages[1]["content"].as_array().unwrap();
@@ -859,7 +938,8 @@ mod tests {
             assistant_content[1]["type"], "tool_use",
             "tool_use must come after thinking"
         );
-        assert_eq!(messages[2]["role"], "user"); // S-014 synthetic guard
+        assert_eq!(messages[2]["role"], "user"); // tool_result
+        assert_eq!(messages[2]["content"][0]["type"], "tool_result");
     }
 
     #[test]
@@ -944,16 +1024,22 @@ mod tests {
 
     #[test]
     fn test_malformed_arguments_uses_empty_object() {
-        let input = vec![ResponseItem::FunctionCall {
-            id: None,
-            name: "shell".to_string(),
-            namespace: None,
-            arguments: "not valid json{{{".to_string(),
-            call_id: "toolu_bad".to_string(),
-        }];
+        let input = vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: "not valid json{{{".to_string(),
+                call_id: "toolu_bad".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_bad".to_string(),
+                output: FunctionCallOutputPayload::from_text("error".to_string()),
+            },
+        ];
 
         let messages = conversation_to_anthropic_messages(&input);
-        assert_eq!(messages.len(), 2); // assistant + S-014 guard
+        assert_eq!(messages.len(), 2); // assistant + user(tool_result)
         assert_eq!(messages[0]["content"][0]["type"], "tool_use");
         assert_eq!(
             messages[0]["content"][0]["input"],
@@ -1467,6 +1553,8 @@ mod tests {
         use codex_protocol::models::LocalShellExecAction;
         use codex_protocol::models::LocalShellStatus;
 
+        // S-005: A LocalShellCall with call_id=None can never have a matching
+        // FunctionCallOutput, so it is always removed by orphan cleanup.
         let input = vec![ResponseItem::LocalShellCall {
             call_id: None,
             action: LocalShellAction::Exec(LocalShellExecAction {
@@ -1480,10 +1568,9 @@ mod tests {
             status: LocalShellStatus::InProgress,
         }];
         let messages = conversation_to_anthropic_messages(&input);
-        let tool_use_id = messages[0]["content"][0]["id"].as_str().unwrap();
         assert!(
-            !tool_use_id.is_empty(),
-            "tool_use id must not be empty string when call_id is None"
+            messages.is_empty(),
+            "LocalShellCall with None call_id is orphaned and should be removed"
         );
     }
 
@@ -1493,18 +1580,24 @@ mod tests {
         use codex_protocol::models::LocalShellExecAction;
         use codex_protocol::models::LocalShellStatus;
 
-        let input = vec![ResponseItem::LocalShellCall {
-            call_id: Some("toolu_abc123".to_string()),
-            action: LocalShellAction::Exec(LocalShellExecAction {
-                command: vec!["echo".to_string(), "hi".to_string()],
-                timeout_ms: None,
-                working_directory: None,
-                env: None,
-                user: None,
-            }),
-            id: None,
-            status: LocalShellStatus::InProgress,
-        }];
+        let input = vec![
+            ResponseItem::LocalShellCall {
+                call_id: Some("toolu_abc123".to_string()),
+                action: LocalShellAction::Exec(LocalShellExecAction {
+                    command: vec!["echo".to_string(), "hi".to_string()],
+                    timeout_ms: None,
+                    working_directory: None,
+                    env: None,
+                    user: None,
+                }),
+                id: None,
+                status: LocalShellStatus::InProgress,
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_abc123".to_string(),
+                output: FunctionCallOutputPayload::from_text("hi".to_string()),
+            },
+        ];
         let messages = conversation_to_anthropic_messages(&input);
         assert_eq!(messages[0]["content"][0]["id"], "toolu_abc123");
     }
@@ -1513,7 +1606,10 @@ mod tests {
 
     #[test]
     fn trailing_assistant_gets_synthetic_user_message() {
-        // Simulate: assistant tool_use with no matching tool_result yet
+        // S-005: orphaned in-flight tool calls are now removed before
+        // translation, so only the user message survives. The S-014 trailing
+        // assistant guard is tested separately with paired tool calls in
+        // `trailing_assistant_with_paired_tool_call_gets_guard`.
         use codex_protocol::models::LocalShellAction;
         use codex_protocol::models::LocalShellExecAction;
         use codex_protocol::models::LocalShellStatus;
@@ -1540,21 +1636,14 @@ mod tests {
                 id: None,
                 status: LocalShellStatus::InProgress,
             },
-            // No FunctionCallOutput — tool still in-flight
+            // No FunctionCallOutput — orphaned by S-005
         ];
         let messages = conversation_to_anthropic_messages(&input);
-        let last = messages.last().unwrap();
+        // S-005 removes the orphaned LocalShellCall; only user message remains
+        assert_eq!(messages.len(), 1, "orphaned tool call removed, only user msg remains");
         assert_eq!(
-            last["role"], "user",
-            "trailing assistant must be followed by synthetic user message"
-        );
-        assert!(
-            last["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .to_lowercase()
-                .contains("awaiting"),
-            "synthetic message should indicate awaiting tool result"
+            messages[0]["role"], "user",
+            "only the user message should survive orphan cleanup"
         );
     }
 
@@ -1620,5 +1709,206 @@ mod tests {
             last["content"][0]["type"] == "tool_result",
             "last message should be the real tool_result, not synthetic"
         );
+    }
+
+    // ── S-005: Orphaned tool call cleanup tests ─────────────────────────
+
+    #[test]
+    fn orphan_cleanup_empty_input() {
+        let result = super::clean_orphaned_tool_calls(&[]);
+        assert!(result.is_empty(), "empty input should produce empty output");
+    }
+
+    #[test]
+    fn orphan_cleanup_paired_preserved() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "run ls".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: r#"{"command":"ls"}"#.to_string(),
+                call_id: "toolu_paired".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_paired".to_string(),
+                output: FunctionCallOutputPayload::from_text("file.txt".to_string()),
+            },
+        ];
+        let result = super::clean_orphaned_tool_calls(&input);
+        assert_eq!(result.len(), 3, "all 3 items (msg + call + output) should be preserved");
+    }
+
+    #[test]
+    fn orphan_cleanup_orphaned_function_call_removed() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "run ls".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: r#"{"command":"ls"}"#.to_string(),
+                call_id: "toolu_orphan".to_string(),
+            },
+            // No matching FunctionCallOutput
+        ];
+        let result = super::clean_orphaned_tool_calls(&input);
+        assert_eq!(result.len(), 1, "orphaned FunctionCall should be removed, only Message remains");
+        assert!(matches!(&result[0], ResponseItem::Message { .. }));
+    }
+
+    #[test]
+    fn orphan_cleanup_orphaned_local_shell_call_removed() {
+        use codex_protocol::models::{LocalShellAction, LocalShellExecAction, LocalShellStatus};
+        let input = vec![
+            ResponseItem::LocalShellCall {
+                id: None,
+                call_id: Some("shell_orphan".to_string()),
+                status: LocalShellStatus::Completed,
+                action: LocalShellAction::Exec(LocalShellExecAction {
+                    command: vec!["ls".to_string()],
+                    timeout_ms: None,
+                    working_directory: None,
+                    env: None,
+                    user: None,
+                }),
+            },
+            // No matching FunctionCallOutput
+        ];
+        let result = super::clean_orphaned_tool_calls(&input);
+        assert!(result.is_empty(), "orphaned LocalShellCall should be removed");
+    }
+
+    #[test]
+    fn orphan_cleanup_orphaned_output_removed() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "hello".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_no_call".to_string(),
+                output: FunctionCallOutputPayload::from_text("output".to_string()),
+            },
+        ];
+        let result = super::clean_orphaned_tool_calls(&input);
+        assert_eq!(result.len(), 1, "orphaned FunctionCallOutput should be removed");
+        assert!(matches!(&result[0], ResponseItem::Message { .. }));
+    }
+
+    #[test]
+    fn orphan_cleanup_mixed_only_orphan_removed() {
+        use codex_protocol::models::{LocalShellAction, LocalShellExecAction, LocalShellStatus};
+        let input = vec![
+            // Paired: FunctionCall + FunctionCallOutput
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: r#"{"command":"ls"}"#.to_string(),
+                call_id: "toolu_good".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_good".to_string(),
+                output: FunctionCallOutputPayload::from_text("ok".to_string()),
+            },
+            // Orphaned FunctionCall (no output)
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "read_file".to_string(),
+                namespace: None,
+                arguments: r#"{"path":"x"}"#.to_string(),
+                call_id: "toolu_bad".to_string(),
+            },
+            // Orphaned FunctionCallOutput (no call)
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_stray".to_string(),
+                output: FunctionCallOutputPayload::from_text("stray".to_string()),
+            },
+            // Paired LocalShellCall + output
+            ResponseItem::LocalShellCall {
+                id: None,
+                call_id: Some("shell_good".to_string()),
+                status: LocalShellStatus::Completed,
+                action: LocalShellAction::Exec(LocalShellExecAction {
+                    command: vec!["echo".to_string(), "hi".to_string()],
+                    timeout_ms: None,
+                    working_directory: None,
+                    env: None,
+                    user: None,
+                }),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "shell_good".to_string(),
+                output: FunctionCallOutputPayload::from_text("hi".to_string()),
+            },
+        ];
+        let result = super::clean_orphaned_tool_calls(&input);
+        // Should keep: FunctionCall(toolu_good), FunctionCallOutput(toolu_good),
+        //              LocalShellCall(shell_good), FunctionCallOutput(shell_good)
+        // Should remove: FunctionCall(toolu_bad), FunctionCallOutput(toolu_stray)
+        assert_eq!(result.len(), 4, "only paired items should remain");
+
+        // Verify the surviving call_ids
+        let ids: Vec<String> = result.iter().filter_map(|item| match item {
+            ResponseItem::FunctionCall { call_id, .. } => Some(call_id.clone()),
+            ResponseItem::LocalShellCall { call_id, .. } => call_id.clone(),
+            ResponseItem::FunctionCallOutput { call_id, .. } => Some(call_id.clone()),
+            _ => None,
+        }).collect();
+        assert!(ids.contains(&"toolu_good".to_string()));
+        assert!(ids.contains(&"shell_good".to_string()));
+        assert!(!ids.contains(&"toolu_bad".to_string()));
+        assert!(!ids.contains(&"toolu_stray".to_string()));
+    }
+
+    #[test]
+    fn orphan_cleanup_integration_with_translation() {
+        // Verify that conversation_to_anthropic_messages handles orphans
+        // gracefully (no panic, orphaned items produce no output).
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "do it".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            // Orphaned call — should be stripped before translation
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: r#"{"command":"ls"}"#.to_string(),
+                call_id: "toolu_gone".to_string(),
+            },
+        ];
+        let messages = conversation_to_anthropic_messages(&input);
+        // After orphan removal only the user message survives.
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
     }
 }
