@@ -1738,6 +1738,11 @@ mod tests {
 
     #[test]
     fn orphan_cleanup_paired_preserved() {
+
+    // ── S-020 Sub-A: comprehensive translator tests ────────────────────
+
+    #[test]
+    fn multi_turn_alternating_user_assistant_tool_use_tool_result() {
         let input = vec![
             ResponseItem::Message {
                 id: None,
@@ -1766,6 +1771,46 @@ mod tests {
 
     #[test]
     fn orphan_cleanup_orphaned_function_call_removed() {
+
+                arguments: r#"{"command":"ls -la"}"#.to_string(),
+                call_id: "toolu_mt_01".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_mt_01".to_string(),
+                output: FunctionCallOutputPayload::from_text("drwxr-xr-x  5 user".to_string()),
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "Turn 2 final answer".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+        assert_eq!(messages.len(), 6, "should have 6 messages for multi-turn with tool use");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"][0]["text"], "Turn 1 question");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["text"], "Turn 1 answer");
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"][0]["text"], "Turn 2 question");
+        assert_eq!(messages[3]["role"], "assistant");
+        assert_eq!(messages[3]["content"][0]["type"], "tool_use");
+        assert_eq!(messages[3]["content"][0]["name"], "shell");
+        assert_eq!(messages[4]["role"], "user");
+        assert_eq!(messages[4]["content"][0]["type"], "tool_result");
+        assert_eq!(messages[5]["role"], "assistant");
+        assert_eq!(messages[5]["content"][0]["text"], "Turn 2 final answer");
+    }
+
+    #[test]
+    fn thinking_preserved_in_latest_stripped_from_earlier_content_field() {
+        use codex_protocol::models::ReasoningItemContent;
+
         let input = vec![
             ResponseItem::Message {
                 id: None,
@@ -1904,17 +1949,255 @@ mod tests {
     fn orphan_cleanup_integration_with_translation() {
         // Verify that conversation_to_anthropic_messages handles orphans
         // gracefully (no panic, orphaned items produce no output).
+
+                arguments: r#"{"path":"main.rs"}"#.to_string(),
+                call_id: "toolu_think_01".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_think_01".to_string(),
+                output: FunctionCallOutputPayload::from_text("fn main(){}".to_string()),
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Second".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Reasoning {
+                id: String::new(),
+                summary: Vec::new(),
+                content: Some(vec![ReasoningItemContent::ReasoningText {
+                    text: "Latest thinking via content".to_string(),
+                }]),
+                encrypted_content: Some("latest_content_sig".to_string()),
+                raw_wire_block: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "Final".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+
+        let early_assistant = messages.iter().find(|m| {
+            m["role"] == "assistant"
+                && m["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|b| b["type"] == "tool_use")
+        });
+        if let Some(ea) = early_assistant {
+            for block in ea["content"].as_array().unwrap() {
+                assert_ne!(block["type"], "thinking", "earlier thinking must be stripped");
+            }
+        }
+
+        let last_assistant = messages.last().unwrap();
+        assert_eq!(last_assistant["role"], "assistant");
+        let content = last_assistant["content"].as_array().unwrap();
+        let thinking_block = content.iter().find(|b| b["type"] == "thinking");
+        assert!(thinking_block.is_some(), "latest must keep thinking");
+        assert_eq!(
+            thinking_block.unwrap()["thinking"],
+            "Latest thinking via content"
+        );
+    }
+
+    #[test]
+    fn developer_role_extracted_not_in_messages() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![
+                    ContentItem::InputText {
+                        text: "AGENTS.md instructions".to_string(),
+                    },
+                    ContentItem::InputText {
+                        text: "Permission directives".to_string(),
+                    },
+                ],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Hello".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+        assert_eq!(messages.len(), 1, "only user message should remain");
+        assert_eq!(messages[0]["role"], "user");
+
+        let dev_blocks = extract_developer_blocks(&input);
+        assert_eq!(dev_blocks.len(), 2);
+        assert_eq!(dev_blocks[0], "AGENTS.md instructions");
+        assert_eq!(dev_blocks[1], "Permission directives");
+    }
+
+    #[test]
+    fn cache_control_on_last_tool_block() {
+        use crate::client_common::tools::ResponsesApiTool;
+        use crate::tools::spec::JsonSchema;
+
+        let tools = vec![
+            ToolSpec::Function(ResponsesApiTool {
+                name: "tool_a".to_string(),
+                description: "First tool".to_string(),
+                strict: true,
+                defer_loading: None,
+                parameters: JsonSchema::Object {
+                    properties: Default::default(),
+                    required: None,
+                    additional_properties: None,
+                },
+                output_schema: None,
+            }),
+            ToolSpec::Function(ResponsesApiTool {
+                name: "tool_b".to_string(),
+                description: "Second tool".to_string(),
+                strict: true,
+                defer_loading: None,
+                parameters: JsonSchema::Object {
+                    properties: Default::default(),
+                    required: None,
+                    additional_properties: None,
+                },
+                output_schema: None,
+            }),
+        ];
+
+        let anthropic_tools = tools_to_anthropic_format(&tools);
+        assert_eq!(anthropic_tools.len(), 2);
+        assert!(
+            anthropic_tools[0].get("cache_control").is_none(),
+            "first tool should NOT have cache_control"
+        );
+        assert_eq!(
+            anthropic_tools[1]["cache_control"]["type"], "ephemeral",
+            "last tool should have cache_control ephemeral"
+        );
+    }
+
+    #[test]
+    fn empty_conversation_yields_empty_messages() {
+        let messages = conversation_to_anthropic_messages(&[]);
+        assert!(messages.is_empty(), "empty input must produce empty output");
+    }
+
+    #[test]
+    fn tool_use_with_complex_nested_json_arguments() {
+        let nested_args = serde_json::json!({
+            "files": [
+                {"path": "src/main.rs", "content": "fn main() { println!(hello); }"},
+                {"path": "Cargo.toml", "content": "[package]\nname = test"}
+            ],
+            "options": {"recursive": true, "depth": 3}
+        })
+        .to_string();
+
         let input = vec![
             ResponseItem::Message {
                 id: None,
                 role: "user".to_string(),
                 content: vec![ContentItem::InputText {
-                    text: "do it".to_string(),
+                    text: "Create files".to_string(),
                 }],
                 end_turn: None,
                 phase: None,
             },
-            // Orphaned call — should be stripped before translation
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "multi_file_write".to_string(),
+                namespace: None,
+                arguments: nested_args,
+                call_id: "toolu_nested_01".to_string(),
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+        let assistant = messages.iter().find(|m| m["role"] == "assistant").unwrap();
+        let tool_use = &assistant["content"][0];
+        assert_eq!(tool_use["type"], "tool_use");
+        assert_eq!(tool_use["name"], "multi_file_write");
+
+        let input_val = &tool_use["input"];
+        assert_eq!(input_val["files"].as_array().unwrap().len(), 2);
+        assert_eq!(input_val["files"][0]["path"], "src/main.rs");
+        assert_eq!(input_val["options"]["recursive"], true);
+        assert_eq!(input_val["options"]["depth"], 3);
+    }
+
+    #[test]
+    fn multiple_consecutive_user_messages_merged() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Part 1 of question".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Part 2 of question".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Part 3 of question".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+        assert_eq!(messages.len(), 1, "consecutive user messages should be merged into one");
+        assert_eq!(messages[0]["role"], "user");
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3, "all three text blocks should be in the merged message");
+        assert_eq!(content[0]["text"], "Part 1 of question");
+        assert_eq!(content[1]["text"], "Part 2 of question");
+        assert_eq!(content[2]["text"], "Part 3 of question");
+    }
+
+    #[test]
+    fn orphan_cleanup_orphaned_function_call_no_output() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Run command".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
             ResponseItem::FunctionCall {
                 id: None,
                 name: "shell".to_string(),
@@ -1923,7 +2206,7 @@ mod tests {
                 call_id: "toolu_gone".to_string(),
             },
         ];
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         // After orphan removal only the user message survives.
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "user");
@@ -2042,4 +2325,150 @@ mod modality_gating_tests {
         assert_eq!(content[2]["type"], "text");
         assert_eq!(content[2]["text"], "What do you see?");
     }
+}
+
+// ── S-020 Sub-A: additional comprehensive translator tests ─────────
+
+#[cfg(test)]
+mod s020_comprehensive_tests {
+    use super::*;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::FunctionCallOutputPayload;
+    use codex_protocol::models::ResponseItem;
+
+    #[test]
+    fn function_call_output_with_error_status() {
+        let mut error_output = FunctionCallOutputPayload::from_text(
+            "Error: command failed with exit code 1\nstderr: permission denied".to_string(),
+        );
+        error_output.success = Some(false);
+
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Run command".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: r#"{"command":"rm -rf /"}"#.to_string(),
+                call_id: "toolu_err_01".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_err_01".to_string(),
+                output: error_output,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+        let tool_result = messages
+            .iter()
+            .find_map(|m| {
+                m["content"]
+                    .as_array()
+                    .and_then(|blocks| blocks.iter().find(|b| b["type"] == "tool_result"))
+            })
+            .expect("should have a tool_result");
+
+        assert_eq!(tool_result["tool_use_id"], "toolu_err_01");
+        assert!(
+            tool_result["content"]
+                .as_str()
+                .unwrap()
+                .contains("permission denied"),
+            "error output text must be preserved in tool_result content"
+        );
+    }
+
+    #[test]
+    fn redacted_thinking_preserved_across_turns_in_latest() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Q1".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Reasoning {
+                id: String::new(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: Some(" REDACTED old_opaque_data".to_string()),
+                raw_wire_block: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "A1".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Q2".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Reasoning {
+                id: String::new(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: Some(" REDACTED latest_opaque_data".to_string()),
+                raw_wire_block: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "A2".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+        let assistant_msgs: Vec<_> = messages
+            .iter()
+            .filter(|m| m["role"] == "assistant")
+            .collect();
+        assert!(assistant_msgs.len() >= 2, "should have at least 2 assistant messages");
+
+        let first = &assistant_msgs[0];
+        for block in first["content"].as_array().unwrap() {
+            assert_ne!(
+                block["type"], "redacted_thinking",
+                "redacted_thinking must be stripped from earlier turns"
+            );
+        }
+
+        let last = assistant_msgs.last().unwrap();
+        let content = last["content"].as_array().unwrap();
+        assert!(
+            content.iter().any(|b| b["type"] == "redacted_thinking"),
+            "latest assistant must preserve redacted_thinking"
+        );
+        assert_eq!(
+            content
+                .iter()
+                .find(|b| b["type"] == "redacted_thinking")
+                .unwrap()["data"],
+            "latest_opaque_data"
+        );
+    }
+
 }
