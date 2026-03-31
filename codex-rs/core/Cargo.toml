@@ -9,6 +9,10 @@ doctest = false
 name = "codex_core"
 path = "src/lib.rs"
 
+[features]
+default = []
+clang-graph = ["dep:clang", "dep:clang-sys", "dep:petgraph", "dep:bincode"]
+
 [[bin]]
 name = "codex-write-config-schema"
 path = "src/bin/config_schema.rs"
@@ -71,6 +75,7 @@ eventsource-stream = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 iana-time-zone = { workspace = true }
+ignore = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "webp"] }
 indexmap = { workspace = true }
 libc = { workspace = true }
@@ -118,6 +123,12 @@ uuid = { workspace = true, features = ["serde", "v4", "v5"] }
 which = { workspace = true }
 wildmatch = { workspace = true }
 zip = { workspace = true }
+
+# Optional: libclang-based call graph (requires libclang.so at build time)
+clang = { version = "2.0", optional = true }
+clang-sys = { version = "1.8", features = ["runtime"], optional = true }
+petgraph = { version = "0.6", optional = true }
+bincode = { version = "1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = { workspace = true }
