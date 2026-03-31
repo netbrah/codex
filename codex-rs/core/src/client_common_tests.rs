@@ -29,8 +29,6 @@ fn serializes_text_verbosity_when_set() {
             verbosity: Some(OpenAiVerbosity::Low),
             format: None,
         }),
-        temperature: None,
-        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -54,7 +52,8 @@ fn serializes_text_schema_with_strict_format() {
         "required": ["answer"],
     });
     let text_controls =
-        create_text_param_for_request(None, &Some(schema.clone())).expect("text controls");
+        create_text_param_for_request(/*verbosity*/ None, &Some(schema.clone()))
+            .expect("text controls");
 
     let req = ResponsesApiRequest {
         model: "gpt-5.1".to_string(),
@@ -70,8 +69,6 @@ fn serializes_text_schema_with_strict_format() {
         prompt_cache_key: None,
         service_tier: None,
         text: Some(text_controls),
-        temperature: None,
-        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -109,8 +106,6 @@ fn omits_text_when_not_set() {
         prompt_cache_key: None,
         service_tier: None,
         text: None,
-        temperature: None,
-        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -133,8 +128,6 @@ fn serializes_flex_service_tier_when_set() {
         prompt_cache_key: None,
         service_tier: Some(ServiceTier::Flex.to_string()),
         text: None,
-        temperature: None,
-        top_p: None,
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -204,129 +197,4 @@ fn reserializes_shell_outputs_for_function_and_custom_tool_calls() {
             },
         ]
     );
-}
-
-#[test]
-fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
-    let namespace = tools::ToolSearchOutputTool::Namespace(tools::ResponsesApiNamespace {
-        name: "mcp__codex_apps__calendar".to_string(),
-        description: "Plan events".to_string(),
-        tools: vec![tools::ResponsesApiNamespaceTool::Function(
-            tools::ResponsesApiTool {
-                name: "create_event".to_string(),
-                description: "Create a calendar event.".to_string(),
-                strict: false,
-                defer_loading: Some(true),
-                parameters: crate::tools::spec::JsonSchema::Object {
-                    properties: Default::default(),
-                    required: None,
-                    additional_properties: None,
-                },
-                output_schema: None,
-            },
-        )],
-    });
-
-    let value = serde_json::to_value(namespace).expect("serialize namespace");
-
-    assert_eq!(
-        value,
-        serde_json::json!({
-            "type": "namespace",
-            "name": "mcp__codex_apps__calendar",
-            "description": "Plan events",
-            "tools": [
-                {
-                    "type": "function",
-                    "name": "create_event",
-                    "description": "Create a calendar event.",
-                    "strict": false,
-                    "defer_loading": true,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {}
-                    }
-                }
-            ]
-        })
-    );
-}
-
-// ────────────────────────────────────────────────────────────────
-// Sampling parameters serialization tests (Responses API)
-// ────────────────────────────────────────────────────────────────
-
-#[test]
-fn serializes_temperature_when_set() {
-    let req = ResponsesApiRequest {
-        model: "gpt-5.1".to_string(),
-        instructions: "i".to_string(),
-        input: vec![],
-        tools: vec![],
-        tool_choice: "auto".to_string(),
-        parallel_tool_calls: true,
-        reasoning: None,
-        store: false,
-        stream: true,
-        include: vec![],
-        prompt_cache_key: None,
-        service_tier: None,
-        text: None,
-        temperature: Some(0.0),
-        top_p: None,
-    };
-
-    let v = serde_json::to_value(&req).expect("json");
-    assert_eq!(v.get("temperature").and_then(|t| t.as_f64()), Some(0.0));
-    assert!(v.get("top_p").is_none());
-}
-
-#[test]
-fn serializes_top_p_when_set() {
-    let req = ResponsesApiRequest {
-        model: "gpt-5.1".to_string(),
-        instructions: "i".to_string(),
-        input: vec![],
-        tools: vec![],
-        tool_choice: "auto".to_string(),
-        parallel_tool_calls: true,
-        reasoning: None,
-        store: false,
-        stream: true,
-        include: vec![],
-        prompt_cache_key: None,
-        service_tier: None,
-        text: None,
-        temperature: None,
-        top_p: Some(0.95),
-    };
-
-    let v = serde_json::to_value(&req).expect("json");
-    assert!(v.get("temperature").is_none());
-    assert_eq!(v.get("top_p").and_then(|t| t.as_f64()), Some(0.95));
-}
-
-#[test]
-fn omits_temperature_and_top_p_when_none() {
-    let req = ResponsesApiRequest {
-        model: "gpt-5.1".to_string(),
-        instructions: "i".to_string(),
-        input: vec![],
-        tools: vec![],
-        tool_choice: "auto".to_string(),
-        parallel_tool_calls: true,
-        reasoning: None,
-        store: false,
-        stream: true,
-        include: vec![],
-        prompt_cache_key: None,
-        service_tier: None,
-        text: None,
-        temperature: None,
-        top_p: None,
-    };
-
-    let v = serde_json::to_value(&req).expect("json");
-    assert!(v.get("temperature").is_none());
-    assert!(v.get("top_p").is_none());
 }

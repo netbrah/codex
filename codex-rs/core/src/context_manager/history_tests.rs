@@ -51,7 +51,7 @@ fn inter_agent_assistant_msg(text: &str) -> ResponseItem {
         AgentPath::root().join("worker").unwrap(),
         Vec::new(),
         text.to_string(),
-        true,
+        /*trigger_turn*/ true,
     );
     ResponseItem::Message {
         id: None,
@@ -249,7 +249,8 @@ fn filters_non_api_messages() {
 
 #[test]
 fn non_last_reasoning_tokens_return_zero_when_no_user_messages() {
-    let history = create_history_with_items(vec![reasoning_with_encrypted_content(800)]);
+    let history =
+        create_history_with_items(vec![reasoning_with_encrypted_content(/*len*/ 800)]);
 
     assert_eq!(history.get_non_last_reasoning_items_tokens(), 0);
 }
@@ -257,11 +258,11 @@ fn non_last_reasoning_tokens_return_zero_when_no_user_messages() {
 #[test]
 fn non_last_reasoning_tokens_ignore_entries_after_last_user() {
     let history = create_history_with_items(vec![
-        reasoning_with_encrypted_content(900),
+        reasoning_with_encrypted_content(/*len*/ 900),
         user_msg("first"),
-        reasoning_with_encrypted_content(1_000),
+        reasoning_with_encrypted_content(/*len*/ 1_000),
         user_msg("second"),
-        reasoning_with_encrypted_content(2_000),
+        reasoning_with_encrypted_content(/*len*/ 2_000),
     ]);
     // first: (900 * 0.75 - 650) / 4 = 6.25 tokens
     // second: (1000 * 0.75 - 650) / 4 = 25 tokens
@@ -333,7 +334,7 @@ fn drop_last_n_user_turns_treats_inter_agent_assistant_messages_as_instruction_t
         inter_agent_reply,
     ]);
 
-    history.drop_last_n_user_turns(1);
+    history.drop_last_n_user_turns(/*num_turns*/ 1);
 
     assert_eq!(history.raw_items(), &vec![first_turn, first_reply]);
 }
@@ -355,7 +356,7 @@ fn total_token_usage_includes_all_items_after_last_model_generated_item() {
             total_tokens: 100,
             ..Default::default()
         },
-        None,
+        /*model_context_window*/ None,
     );
     let added_user = user_msg("new user message");
     let added_tool_output = custom_tool_call_output("tool-tail", "new tool output");
@@ -365,7 +366,7 @@ fn total_token_usage_includes_all_items_after_last_model_generated_item() {
     );
 
     assert_eq!(
-        history.get_total_token_usage(true),
+        history.get_total_token_usage(/*server_reasoning_included*/ true),
         100 + estimate_item_token_count(&added_user)
             + estimate_item_token_count(&added_tool_output)
     );
@@ -609,7 +610,12 @@ fn for_prompt_clears_image_generation_result_when_images_are_unsupported() {
 #[test]
 fn get_history_for_prompt_drops_ghost_commits() {
     let items = vec![ResponseItem::GhostSnapshot {
-        ghost_commit: GhostCommit::new("ghost-1".to_string(), None, Vec::new(), Vec::new()),
+        ghost_commit: GhostCommit::new(
+            "ghost-1".to_string(),
+            /*parent*/ None,
+            Vec::new(),
+            Vec::new(),
+        ),
     }];
     let history = create_history_with_items(items);
     let modalities = default_input_modalities();
@@ -795,7 +801,7 @@ fn drop_last_n_user_turns_preserves_prefix() {
 
     let modalities = default_input_modalities();
     let mut history = create_history_with_items(items);
-    history.drop_last_n_user_turns(1);
+    history.drop_last_n_user_turns(/*num_turns*/ 1);
     assert_eq!(
         history.for_prompt(&modalities),
         vec![
@@ -812,7 +818,7 @@ fn drop_last_n_user_turns_preserves_prefix() {
         user_msg("u2"),
         assistant_msg("a2"),
     ]);
-    history.drop_last_n_user_turns(99);
+    history.drop_last_n_user_turns(/*num_turns*/ 99);
     assert_eq!(
         history.for_prompt(&modalities),
         vec![assistant_msg("session prefix item")]
@@ -841,7 +847,7 @@ fn drop_last_n_user_turns_ignores_session_prefix_user_messages() {
 
     let modalities = default_input_modalities();
     let mut history = create_history_with_items(items);
-    history.drop_last_n_user_turns(1);
+    history.drop_last_n_user_turns(/*num_turns*/ 1);
 
     let expected_prefix_and_first_turn = vec![
         user_input_text_msg("<environment_context>ctx</environment_context>"),
@@ -895,7 +901,7 @@ fn drop_last_n_user_turns_ignores_session_prefix_user_messages() {
         user_input_text_msg("turn 2 user"),
         assistant_msg("turn 2 assistant"),
     ]);
-    history.drop_last_n_user_turns(2);
+    history.drop_last_n_user_turns(/*num_turns*/ 2);
     assert_eq!(history.for_prompt(&modalities), expected_prefix_only);
 
     let mut history = create_history_with_items(vec![
@@ -915,7 +921,7 @@ fn drop_last_n_user_turns_ignores_session_prefix_user_messages() {
         user_input_text_msg("turn 2 user"),
         assistant_msg("turn 2 assistant"),
     ]);
-    history.drop_last_n_user_turns(3);
+    history.drop_last_n_user_turns(/*num_turns*/ 3);
     assert_eq!(history.for_prompt(&modalities), expected_prefix_only);
 }
 
@@ -938,7 +944,7 @@ fn drop_last_n_user_turns_trims_context_updates_above_rolled_back_turn() {
     let mut history = create_history_with_items(items);
     let reference_context_item = reference_context_item();
     history.set_reference_context_item(Some(reference_context_item.clone()));
-    history.drop_last_n_user_turns(1);
+    history.drop_last_n_user_turns(/*num_turns*/ 1);
 
     assert_eq!(
         history.clone().for_prompt(&modalities),
@@ -976,7 +982,7 @@ fn drop_last_n_user_turns_clears_reference_context_for_mixed_developer_context_b
     let modalities = default_input_modalities();
     let mut history = create_history_with_items(items);
     history.set_reference_context_item(Some(reference_context_item()));
-    history.drop_last_n_user_turns(1);
+    history.drop_last_n_user_turns(/*num_turns*/ 1);
 
     assert_eq!(
         history.clone().for_prompt(&modalities),
@@ -1168,7 +1174,7 @@ fn format_exec_output_truncates_large_error() {
 
     let truncated = truncate_exec_output(&large_error);
 
-    assert_truncated_message_matches(&truncated, line, 36250);
+    assert_truncated_message_matches(&truncated, line, /*expected_removed*/ 36250);
     assert_ne!(truncated, large_error);
 }
 
@@ -1177,7 +1183,7 @@ fn format_exec_output_marks_byte_truncation_without_omitted_lines() {
     let long_line = "a".repeat(EXEC_FORMAT_MAX_BYTES + 10000);
     let truncated = truncate_exec_output(&long_line);
     assert_ne!(truncated, long_line);
-    assert_truncated_message_matches(&truncated, "a", 2500);
+    assert_truncated_message_matches(&truncated, "a", /*expected_removed*/ 2500);
     assert!(
         !truncated.contains("omitted"),
         "line omission marker should not appear when no lines were dropped: {truncated}"
@@ -1199,7 +1205,7 @@ fn format_exec_output_reports_omitted_lines_and_keeps_head_and_tail() {
         .collect();
 
     let truncated = truncate_exec_output(&content);
-    assert_truncated_message_matches(&truncated, "line-0-", 34_723);
+    assert_truncated_message_matches(&truncated, "line-0-", /*expected_removed*/ 34_723);
     assert!(
         truncated.contains("line-0-"),
         "expected head line to remain: {truncated}"
@@ -1222,7 +1228,7 @@ fn format_exec_output_prefers_line_marker_when_both_limits_exceeded() {
 
     let truncated = truncate_exec_output(&content);
 
-    assert_truncated_message_matches(&truncated, "line-0-", 17_423);
+    assert_truncated_message_matches(&truncated, "line-0-", /*expected_removed*/ 17_423);
 }
 
 #[cfg(not(debug_assertions))]
