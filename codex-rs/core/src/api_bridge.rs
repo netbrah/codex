@@ -10,6 +10,8 @@ use codex_login::token_data::PlanType;
 use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::Value;
+use std::time::Duration;
+use tracing::warn;
 
 use crate::auth::CodexAuth;
 use crate::error::CodexErr;
@@ -108,10 +110,19 @@ pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
                         }
                     }
 
-                    CodexErr::RetryLimit(RetryLimitReachedError {
-                        status,
-                        request_id: extract_request_tracking_id(headers.as_ref()),
-                    })
+                    // Generic 429 (not usage_limit_reached / usage_not_included) is a
+                    // transient rate-limit. Map to Stream so the retry loop backs off
+                    // and retries instead of treating it as a terminal error.
+                    let delay = parse_retry_after_header(headers.as_ref());
+                    warn!(
+                        "rate-limited (429): retry-after={:?}, request_id={:?}",
+                        delay,
+                        extract_request_tracking_id(headers.as_ref()),
+                    );
+                    CodexErr::Stream(
+                        format!("rate limited (429): {}", body_text),
+                        delay,
+                    )
                 } else {
                     CodexErr::UnexpectedStatus(UnexpectedResponseError {
                         status,
@@ -154,6 +165,18 @@ const X_ERROR_JSON_HEADER: &str = "x-error-json";
 #[cfg(test)]
 #[path = "api_bridge_tests.rs"]
 mod tests;
+
+/// Parse the `Retry-After` header value as a number of seconds and return it
+/// as a [`Duration`].  Returns `None` when the header is absent or cannot be
+/// parsed as a positive integer (HTTP-date values are ignored for simplicity).
+fn parse_retry_after_header(headers: Option<&HeaderMap>) -> Option<Duration> {
+    let value = headers?.get(http::header::RETRY_AFTER)?;
+    let secs: u64 = value.to_str().ok()?.trim().parse().ok()?;
+    if secs == 0 {
+        return None;
+    }
+    Some(Duration::from_secs(secs))
+}
 
 fn extract_request_tracking_id(headers: Option<&HeaderMap>) -> Option<String> {
     extract_request_id(headers).or_else(|| extract_header(headers, CF_RAY_HEADER))

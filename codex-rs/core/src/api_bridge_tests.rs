@@ -1,6 +1,7 @@
 use super::*;
 use base64::Engine;
 use pretty_assertions::assert_eq;
+use std::time::Duration;
 
 #[test]
 fn map_api_error_maps_server_overloaded() {
@@ -140,4 +141,82 @@ fn core_auth_provider_reports_when_auth_header_will_attach() {
 
     assert!(auth.auth_header_attached());
     assert_eq!(auth.auth_header_name(), Some("authorization"));
+}
+
+#[test]
+fn map_api_error_429_generic_is_retryable() {
+    let body = serde_json::json!({
+        "error": {
+            "type": "rate_limit_error",
+            "message": "too many requests"
+        }
+    })
+    .to_string();
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body),
+    }));
+
+    assert!(
+        matches!(err, CodexErr::Stream(_, None)),
+        "expected retryable CodexErr::Stream, got {err:?}"
+    );
+    assert!(err.is_retryable(), "429 should be retryable");
+}
+
+#[test]
+fn map_api_error_429_respects_retry_after_header() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::RETRY_AFTER,
+        http::HeaderValue::from_static("5"),
+    );
+    let body = serde_json::json!({
+        "error": {
+            "type": "rate_limit_error",
+            "message": "too many requests"
+        }
+    })
+    .to_string();
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: Some(headers),
+        body: Some(body),
+    }));
+
+    match err {
+        CodexErr::Stream(_, Some(delay)) => {
+            assert_eq!(delay, Duration::from_secs(5));
+        }
+        other => panic!("expected CodexErr::Stream with delay, got {other:?}"),
+    }
+}
+
+#[test]
+fn map_api_error_429_usage_limit_still_non_retryable() {
+    let body = serde_json::json!({
+        "error": {
+            "type": "usage_limit_reached",
+            "plan_type": "pro",
+        }
+    })
+    .to_string();
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body),
+    }));
+
+    assert!(
+        matches!(err, CodexErr::UsageLimitReached(_)),
+        "usage_limit_reached 429 should still be UsageLimitReached, got {err:?}"
+    );
+    assert!(
+        !err.is_retryable(),
+        "usage_limit_reached should not be retryable"
+    );
 }
