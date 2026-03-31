@@ -71,6 +71,8 @@ use tracing_subscriber::prelude::*;
 use url::Url;
 use uuid::Uuid;
 
+mod app_brand;
+
 mod additional_dirs;
 mod app;
 mod app_backtrack;
