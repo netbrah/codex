@@ -11,7 +11,7 @@ use serde_json::json;
 /// Translates the codex-rs conversation history (`&[ResponseItem]`) into
 /// Anthropic's `messages` array, extracting the system prompt from the first
 /// system-role message if present.
-pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<Value> {
+pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem], supports_image: bool) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
 
     for item in input {
@@ -34,13 +34,30 @@ pub(crate) fn conversation_to_anthropic_messages(input: &[ResponseItem]) -> Vec<
                                 "text": text,
                             })
                         }
-                        ContentItem::InputImage { image_url } => json!({
-                            "type": "image",
-                            "source": {
-                                "type": "url",
-                                "url": image_url,
-                            },
-                        }),
+                        ContentItem::InputImage { image_url } => {
+                            if supports_image {
+                                json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "url",
+                                        "url": image_url,
+                                    },
+                                })
+                            } else {
+                                // S-008: Model does not support image input — emit
+                                // a text placeholder so the request doesn't fail.
+                                tracing::debug!(
+                                    "modality gating: replacing image with text placeholder (model does not support image input)"
+                                );
+                                json!({
+                                    "type": "text",
+                                    "text": format!(
+                                        "[Image: content not shown — this model does not support image input. Original URL: {}]",
+                                        image_url
+                                    ),
+                                })
+                            }
+                        }
                     })
                     .collect();
 
@@ -402,7 +419,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[0]["content"][0]["type"], "text");
@@ -436,7 +453,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[1]["role"], "assistant");
         assert_eq!(messages[1]["content"][0]["type"], "tool_use");
@@ -465,7 +482,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         // S-014 guard appends a synthetic user message after trailing tool_use
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "assistant");
@@ -520,7 +537,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1, "system messages should be skipped");
         assert_eq!(messages[0]["role"], "user");
     }
@@ -535,7 +552,7 @@ mod tests {
             phase: None,
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert!(
             messages.is_empty(),
             "empty content messages should be skipped"
@@ -563,7 +580,7 @@ mod tests {
             raw_wire_block: Some(raw_block.clone()),
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1);
         let block = &messages[0]["content"][0];
         // Must use the raw block, NOT the decomposed fields
@@ -592,7 +609,7 @@ mod tests {
             raw_wire_block: Some(raw_block.clone()),
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1);
         let block = &messages[0]["content"][0];
         assert_eq!(block["type"], "redacted_thinking");
@@ -618,7 +635,7 @@ mod tests {
             raw_wire_block: None,
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1);
         let block = &messages[0]["content"][0];
         assert_eq!(block["type"], "thinking");
@@ -640,7 +657,7 @@ mod tests {
             raw_wire_block: None,
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"][0]["type"], "thinking");
@@ -661,7 +678,7 @@ mod tests {
             raw_wire_block: None,
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(
@@ -716,7 +733,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
 
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[1]["role"], "assistant");
@@ -778,7 +795,7 @@ mod tests {
             }),
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 2); // S-014 guard appends synthetic user
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"][0]["type"], "tool_use");
@@ -804,7 +821,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["content"][0]["type"], "tool_use");
         assert_eq!(messages[0]["content"][0]["id"], "custom_01");
@@ -845,7 +862,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 3); // user + assistant(thinking+tool_use) + S-014 guard
         assert_eq!(messages[0]["role"], "user");
 
@@ -936,7 +953,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1, "developer messages should be skipped");
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[0]["content"][0]["text"], "Hello");
@@ -952,7 +969,7 @@ mod tests {
             call_id: "toolu_bad".to_string(),
         }];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 2); // assistant + S-014 guard
         assert_eq!(messages[0]["content"][0]["type"], "tool_use");
         assert_eq!(
@@ -1027,7 +1044,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
 
         // First assistant message should have thinking stripped, only tool_use remains
         let first_assistant = messages
@@ -1115,7 +1132,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
 
         // First assistant message should NOT have redacted_thinking
         let first_assistant = &messages[1];
@@ -1174,7 +1191,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
 
         // The thinking-only assistant message should be removed
         // We should have: user(Q1) → user(Q2) → assistant(A2)
@@ -1225,7 +1242,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         let last = messages.last().unwrap();
         assert_eq!(last["role"], "assistant");
         let content = last["content"].as_array().unwrap();
@@ -1320,7 +1337,7 @@ mod tests {
             },
         ];
 
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
 
         // Find all assistant messages
         let assistant_msgs: Vec<_> = messages
@@ -1479,7 +1496,7 @@ mod tests {
             id: None,
             status: LocalShellStatus::InProgress,
         }];
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         let tool_use_id = messages[0]["content"][0]["id"].as_str().unwrap();
         assert!(
             !tool_use_id.is_empty(),
@@ -1505,7 +1522,7 @@ mod tests {
             id: None,
             status: LocalShellStatus::InProgress,
         }];
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages[0]["content"][0]["id"], "toolu_abc123");
     }
 
@@ -1542,7 +1559,7 @@ mod tests {
             },
             // No FunctionCallOutput — tool still in-flight
         ];
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         let last = messages.last().unwrap();
         assert_eq!(
             last["role"], "user",
@@ -1571,7 +1588,7 @@ mod tests {
                 phase: None,
             },
         ];
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         assert_eq!(messages.len(), 1, "no synthetic message needed");
         assert_eq!(messages[0]["role"], "user");
     }
@@ -1609,7 +1626,7 @@ mod tests {
                 output: FunctionCallOutputPayload::from_text("file.txt".into()),
             },
         ];
-        let messages = conversation_to_anthropic_messages(&input);
+        let messages = conversation_to_anthropic_messages(&input, true);
         let last = messages.last().unwrap();
         assert_eq!(
             last["role"], "user",
@@ -1620,5 +1637,119 @@ mod tests {
             last["content"][0]["type"] == "tool_result",
             "last message should be the real tool_result, not synthetic"
         );
+    }
+}
+
+// ── S-008: Modality gating tests ────────────────────────────────────
+
+#[cfg(test)]
+mod modality_gating_tests {
+    use super::*;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::ResponseItem;
+
+    /// Helper to build a user message with given content items.
+    fn user_msg(content: Vec<ContentItem>) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content,
+            end_turn: None,
+            phase: None,
+        }
+    }
+
+    // ── Test 1: image-capable model → image block passes through ────
+
+    #[test]
+    fn image_capable_model_passes_through_image_block() {
+        let input = vec![user_msg(vec![ContentItem::InputImage {
+            image_url: "https://example.com/photo.png".to_string(),
+        }])];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+
+        assert_eq!(messages.len(), 1);
+        let block = &messages[0]["content"][0];
+        assert_eq!(block["type"], "image", "image block should pass through");
+        assert_eq!(block["source"]["type"], "url");
+        assert_eq!(block["source"]["url"], "https://example.com/photo.png");
+    }
+
+    // ── Test 2: text-only model → image replaced with placeholder ───
+
+    #[test]
+    fn text_only_model_replaces_image_with_placeholder() {
+        let input = vec![user_msg(vec![ContentItem::InputImage {
+            image_url: "https://example.com/photo.png".to_string(),
+        }])];
+
+        let messages = conversation_to_anthropic_messages(&input, false);
+
+        assert_eq!(messages.len(), 1);
+        let block = &messages[0]["content"][0];
+        assert_eq!(
+            block["type"], "text",
+            "image should be replaced with text placeholder"
+        );
+        let text = block["text"].as_str().unwrap();
+        assert!(
+            text.contains("[Image:"),
+            "placeholder should start with [Image:"
+        );
+        assert!(
+            text.contains("does not support image input"),
+            "placeholder should explain that the model doesn't support images"
+        );
+        assert!(
+            text.contains("https://example.com/photo.png"),
+            "placeholder should include the original URL"
+        );
+    }
+
+    // ── Test 3: mixed content with text-only model ──────────────────
+
+    #[test]
+    fn mixed_content_text_only_model_replaces_image_preserves_text() {
+        let input = vec![user_msg(vec![
+            ContentItem::InputText {
+                text: "Please describe this image:".to_string(),
+            },
+            ContentItem::InputImage {
+                image_url: "data:image/png;base64,iVBOR...".to_string(),
+            },
+            ContentItem::InputText {
+                text: "What do you see?".to_string(),
+            },
+        ])];
+
+        let messages = conversation_to_anthropic_messages(&input, false);
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3, "should have 3 content blocks");
+
+        // First block: text preserved
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Please describe this image:");
+
+        // Second block: image replaced with text placeholder
+        assert_eq!(
+            content[1]["type"], "text",
+            "image should become text placeholder"
+        );
+        let placeholder = content[1]["text"].as_str().unwrap();
+        assert!(
+            placeholder.contains("[Image:"),
+            "placeholder should indicate it was an image"
+        );
+        assert!(
+            placeholder.contains("data:image/png;base64,iVBOR..."),
+            "placeholder should include original URL"
+        );
+
+        // Third block: text preserved
+        assert_eq!(content[2]["type"], "text");
+        assert_eq!(content[2]["text"], "What do you see?");
     }
 }

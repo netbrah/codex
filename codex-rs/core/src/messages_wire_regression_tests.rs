@@ -19,7 +19,7 @@ fn wire_api_messages_variant_exists() {
 /// Smoke-compile guard: conversation_to_anthropic_messages is callable.
 #[test]
 fn conversation_to_anthropic_messages_callable() {
-    let result = conversation_to_anthropic_messages(&[]);
+    let result = conversation_to_anthropic_messages(&[], true);
     assert!(result.is_empty());
 }
 
