@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# XLI Proxy E2E Pre-Commit Hook
+# Proxy E2E Pre-Commit Hook
 #
-# Runs /messages wire integration tests against live NetApp LiteLLM proxy.
+# Runs /messages wire integration tests against a live LiteLLM proxy.
 # Only runs when explicitly opted in via CODEX_PROXY_E2E=1.
 #
 # Usage:
