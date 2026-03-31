@@ -1,6 +1,7 @@
 //! Shared tool definitions and Responses API tool primitives that can live
 //! outside `codex-core`.
 
+mod analyze_symbol_source_tool;
 mod agent_job_tool;
 mod agent_tool;
 mod code_mode;
@@ -18,6 +19,7 @@ mod tool_spec;
 mod utility_tool;
 mod view_image;
 
+pub use analyze_symbol_source_tool::create_analyze_symbol_source_tool;
 pub use agent_job_tool::create_report_agent_job_result_tool;
 pub use agent_job_tool::create_spawn_agents_on_csv_tool;
 pub use agent_tool::SpawnAgentToolOptions;

@@ -46,6 +46,7 @@ use codex_tools::ToolSuggestEntry;
 use codex_tools::ViewImageToolOptions;
 use codex_tools::WaitAgentTimeoutOptions;
 use codex_tools::augment_tool_spec_for_code_mode;
+use codex_tools::create_analyze_symbol_source_tool;
 use codex_tools::create_assign_task_tool;
 use codex_tools::create_close_agent_tool_v1;
 use codex_tools::create_close_agent_tool_v2;
@@ -358,71 +359,6 @@ fn supports_image_generation(model_info: &ModelInfo) -> bool {
     model_info.input_modalities.contains(&InputModality::Image)
 }
 
-fn create_analyze_symbol_source_tool() -> ToolSpec {
-    use codex_tools::JsonSchema;
-    use codex_tools::ResponsesApiTool;
-
-    let properties = std::collections::BTreeMap::from([
-        (
-            "symbol".to_string(),
-            JsonSchema::String {
-                description: Some(
-                    "Symbol name to analyze (plain or qualified, e.g. `my_func` or                      `MyStruct::my_method`)."
-                        .to_string(),
-                ),
-            },
-        ),
-        (
-            "scopePath".to_string(),
-            JsonSchema::String {
-                description: Some(
-                    "Directory to search in. Defaults to the session's working directory."
-                        .to_string(),
-                ),
-            },
-        ),
-        (
-            "maxCallers".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Maximum number of callers (references) to return (default 15).".to_string(),
-                ),
-            },
-        ),
-        (
-            "maxCallees".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Maximum number of callees to extract from the definition (default 20)."
-                        .to_string(),
-                ),
-            },
-        ),
-        (
-            "contextLines".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Number of source lines to include around the definition (default 50)."
-                        .to_string(),
-                ),
-            },
-        ),
-    ]);
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "analyze_symbol_source".to_string(),
-        description: "Analyzes a symbol in the local workspace using ripgrep-backed search.                       Returns the definition location, callers (references), and callees extracted                       from the definition source."
-            .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::Object {
-            properties,
-            required: Some(vec!["symbol".to_string()]),
-            additional_properties: Some(false.into()),
-        },
-        output_schema: None,
-    })
-}
 
 /// TODO(dylan): deprecate once we get rid of json tool
 #[derive(Serialize, Deserialize)]
