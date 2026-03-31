@@ -1352,6 +1352,7 @@ dependencies = [
  "codex-login",
  "codex-plugin",
  "codex-protocol",
+ "os_info",
  "pretty_assertions",
  "serde",
  "serde_json",
