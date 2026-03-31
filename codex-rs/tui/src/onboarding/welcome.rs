@@ -14,6 +14,7 @@ use ratatui::widgets::Wrap;
 use std::cell::Cell;
 
 use crate::ascii_animation::AsciiAnimation;
+use crate::app_brand;
 use crate::onboarding::onboarding_screen::KeyboardHandler;
 use crate::onboarding::onboarding_screen::StepStateProvider;
 use crate::tui::FrameRequester;
@@ -86,8 +87,8 @@ impl WidgetRef for &WelcomeWidget {
         lines.push(Line::from(vec![
             "  ".into(),
             "Welcome to ".into(),
-            "Codex".bold(),
-            ", OpenAI's command-line coding agent".into(),
+            app_brand::app_name_display().bold(),
+            format!(", {}", app_brand::app_tagline()).into(),
         ]));
 
         Paragraph::new(lines)

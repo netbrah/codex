@@ -52,6 +52,11 @@ const childEnv = { ...process.env, XLI_HOME };
 if (!process.env.CODEX_HOME) {
   childEnv.CODEX_HOME = XLI_HOME;
 }
+
+// Inject branding env vars so the Rust TUI shows XLI identity.
+childEnv.CODEX_APP_NAME = process.env.CODEX_APP_NAME || "xli";
+childEnv.CODEX_APP_TAGLINE =
+  process.env.CODEX_APP_TAGLINE || "Cross-LLM Interface";
 // ────────────────────────────────────────────────────────────────────
 
 // ── Version intercept ───────────────────────────────────────────────

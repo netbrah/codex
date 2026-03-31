@@ -53,7 +53,7 @@ pub(crate) enum TerminalTitleItem {
 impl TerminalTitleItem {
     pub(crate) fn description(self) -> &'static str {
         match self {
-            TerminalTitleItem::AppName => "Codex app name",
+            TerminalTitleItem::AppName => "App name",
             TerminalTitleItem::Project => "Project name (falls back to current directory name)",
             TerminalTitleItem::Spinner => {
                 "Animated task spinner (omitted while idle or when animations are off)"
@@ -74,7 +74,7 @@ impl TerminalTitleItem {
     /// session.
     pub(crate) fn preview_example(self) -> &'static str {
         match self {
-            TerminalTitleItem::AppName => "codex",
+            TerminalTitleItem::AppName => crate::app_brand::app_name(),
             TerminalTitleItem::Project => "my-project",
             TerminalTitleItem::Spinner => "⠋",
             TerminalTitleItem::Status => "Working",
