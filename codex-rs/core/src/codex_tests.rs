@@ -255,6 +255,8 @@ fn test_model_client_session() -> crate::client::ModelClientSession {
         ),
         codex_protocol::protocol::SessionSource::Exec,
         /*model_verbosity*/ None,
+        /*tool_choice*/ None,
+        /*messages_metadata_user_id*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -996,6 +998,7 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
         total_token_usage: TokenUsage {
             input_tokens: 10,
             cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
             output_tokens: 20,
             reasoning_output_tokens: 0,
             total_tokens: 30,
@@ -1003,6 +1006,7 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
         last_token_usage: TokenUsage {
             input_tokens: 3,
             cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
             output_tokens: 4,
             reasoning_output_tokens: 0,
             total_tokens: 7,
@@ -1013,6 +1017,7 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
         total_token_usage: TokenUsage {
             input_tokens: 100,
             cached_input_tokens: 50,
+            cache_creation_input_tokens: 0,
             output_tokens: 200,
             reasoning_output_tokens: 25,
             total_tokens: 375,
@@ -1020,6 +1025,7 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
         last_token_usage: TokenUsage {
             input_tokens: 10,
             cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
             output_tokens: 20,
             reasoning_output_tokens: 5,
             total_tokens: 35,
@@ -2697,6 +2703,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
+            None, // tool_choice
+            None, // messages_metadata_user_id
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
             Session::build_model_client_beta_features_header(config.as_ref()),
@@ -3540,6 +3548,8 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
+            None, // tool_choice
+            None, // messages_metadata_user_id
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
             Session::build_model_client_beta_features_header(config.as_ref()),
