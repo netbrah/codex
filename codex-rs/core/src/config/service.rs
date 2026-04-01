@@ -410,7 +410,7 @@ impl ConfigService {
     }
 
     /// Loads a "thread-agnostic" config, which means the config layers do not
-    /// include any in-repo .codex/ folders because there is no cwd/project root
+    /// include any in-repo .xli/ folders because there is no cwd/project root
     /// associated with this query.
     async fn load_thread_agnostic_config(&self) -> std::io::Result<ConfigLayerStack> {
         let cwd: Option<AbsolutePathBuf> = None;

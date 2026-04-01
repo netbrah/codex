@@ -11,14 +11,14 @@ use dirs::home_dir;
 use owo_colors::OwoColorize;
 
 #[derive(Debug, Parser)]
-#[command(name = "codex-state-logs")]
-#[command(about = "Tail Codex logs from the dedicated logs SQLite DB with simple filters")]
+#[command(name = "xli-state-logs")]
+#[command(about = "Tail XLI logs from the dedicated logs SQLite DB with simple filters")]
 struct Args {
-    /// Path to CODEX_HOME. Defaults to $CODEX_HOME or ~/.codex.
-    #[arg(long, env = "CODEX_HOME")]
-    codex_home: Option<PathBuf>,
+    /// Path to XLI_HOME. Defaults to $XLI_HOME or ~/.xli.
+    #[arg(long, env = "XLI_HOME")]
+    xli_home: Option<PathBuf>,
 
-    /// Direct path to the logs SQLite database. Overrides --codex-home.
+    /// Direct path to the logs SQLite database. Overrides --xli-home.
     #[arg(long)]
     db: Option<PathBuf>,
 
@@ -84,11 +84,11 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let db_path = resolve_db_path(&args)?;
     let filter = build_filter(&args)?;
-    let codex_home = db_path
+    let xli_home = db_path
         .parent()
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| PathBuf::from("."));
-    let runtime = StateRuntime::init(codex_home, "logs-client".to_string()).await?;
+    let runtime = StateRuntime::init(xli_home, "logs-client".to_string()).await?;
 
     let mut last_id =
         print_backfill(runtime.as_ref(), &filter, args.backfill, args.compact).await?;
@@ -112,15 +112,15 @@ fn resolve_db_path(args: &Args) -> anyhow::Result<PathBuf> {
         return Ok(db.clone());
     }
 
-    let codex_home = args.codex_home.clone().unwrap_or_else(default_codex_home);
-    Ok(codex_state::logs_db_path(codex_home.as_path()))
+    let xli_home = args.xli_home.clone().unwrap_or_else(default_xli_home);
+    Ok(codex_state::logs_db_path(xli_home.as_path()))
 }
 
-fn default_codex_home() -> PathBuf {
+fn default_xli_home() -> PathBuf {
     if let Some(home) = home_dir() {
-        return home.join(".codex");
+        return home.join(".xli");
     }
-    PathBuf::from(".codex")
+    PathBuf::from(".xli")
 }
 
 fn build_filter(args: &Args) -> anyhow::Result<LogFilter> {

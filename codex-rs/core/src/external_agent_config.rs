@@ -119,7 +119,7 @@ impl ExternalAgentConfigService {
         );
         let target_config = repo_root.map_or_else(
             || self.codex_home.join("config.toml"),
-            |repo_root| repo_root.join(".codex").join("config.toml"),
+            |repo_root| repo_root.join(".xli").join("config.toml"),
         );
         if source_settings.is_file() {
             let raw_settings = fs::read_to_string(&source_settings)?;
@@ -228,7 +228,7 @@ impl ExternalAgentConfigService {
         let (source_settings, target_config) = if let Some(repo_root) = find_repo_root(cwd)? {
             (
                 repo_root.join(".claude").join("settings.json"),
-                repo_root.join(".codex").join("config.toml"),
+                repo_root.join(".xli").join("config.toml"),
             )
         } else if cwd.is_some_and(|cwd| !cwd.as_os_str().is_empty()) {
             return Ok(());
