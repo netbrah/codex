@@ -48,7 +48,7 @@ build_mac() {
     info "Building macOS arm64..."
     cd "$CODEX"
     cargo build --release -p codex-cli 2>&1 | tail -3
-    local bin="$CODEX/target/release/codex"
+    local bin="$CODEX/target/release/xli"
     [ -f "$bin" ] || die "macOS build failed"
 
     local dest="$NPM/vendor/$MAC_TRIPLE/xli"
@@ -72,7 +72,7 @@ build_linux() {
         die "Need cargo-zigbuild or cross for Linux builds"
     fi
 
-    local bin="$CODEX/target/$LINUX_TRIPLE/release/codex"
+    local bin="$CODEX/target/$LINUX_TRIPLE/release/xli"
     [ -f "$bin" ] || die "Linux build failed"
 
     local dest="$NPM/vendor/$LINUX_TRIPLE/xli"

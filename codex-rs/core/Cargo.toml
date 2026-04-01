@@ -14,7 +14,7 @@ default = []
 clang-graph = ["dep:clang", "dep:clang-sys", "dep:petgraph", "dep:bincode"]
 
 [[bin]]
-name = "codex-write-config-schema"
+name = "xli-write-config-schema"
 path = "src/bin/config_schema.rs"
 
 [lints]

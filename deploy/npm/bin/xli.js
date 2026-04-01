@@ -2,13 +2,10 @@
 // XLI — Cross-LLM Interface
 // Thin shim that spawns the compiled Rust binary with XLI branding.
 //
-// Home isolation: XLI defaults runtime state to ~/.xli so it never
-// collides with stock Codex ~/.codex installs.
+// Home isolation: The Rust engine reads XLI_HOME natively (with
+// CODEX_HOME as a legacy fallback), defaulting to ~/.xli.
 //
 //   XLI_HOME  — override to relocate XLI state (default: ~/.xli)
-//   CODEX_HOME — if explicitly set, XLI honors it as-is.
-//                if unset, XLI bridges it to XLI_HOME so the Rust
-//                engine writes under ~/.xli transparently.
 
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "fs";
@@ -39,19 +36,15 @@ const XLI_BANNER = `
 `;
 
 // ── Home isolation ──────────────────────────────────────────────────
+// The Rust engine reads XLI_HOME natively (falling back to CODEX_HOME
+// for legacy compat).  We just ensure XLI_HOME is set so the default
+// ~/.xli path is used when neither env var is present.
 const homeDir = os.homedir();
 const XLI_HOME = process.env.XLI_HOME || path.join(homeDir, ".xli");
 
 // Build env for the child process.  Start with a shallow copy of the
 // current environment so we never mutate process.env itself.
 const childEnv = { ...process.env, XLI_HOME };
-
-// Bridge CODEX_HOME to XLI_HOME when the operator hasn't explicitly
-// set CODEX_HOME.  This makes the Rust engine (which reads CODEX_HOME)
-// store its state under ~/.xli without any engine changes.
-if (!process.env.CODEX_HOME) {
-  childEnv.CODEX_HOME = XLI_HOME;
-}
 
 // Inject branding env vars so the Rust TUI shows XLI identity.
 childEnv.CODEX_APP_NAME = process.env.CODEX_APP_NAME || "xli";

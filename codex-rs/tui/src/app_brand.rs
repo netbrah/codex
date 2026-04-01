@@ -1,12 +1,12 @@
 //! Environment-driven application branding.
 //!
 //! Reads `CODEX_APP_NAME` and `CODEX_APP_TAGLINE` once at startup and exposes
-//! them for the TUI's branding surfaces. When unset, falls back to the stock
-//! Codex defaults so upstream behavior is completely unchanged.
+//! them for the TUI's branding surfaces. When unset, falls back to the XLI
+//! defaults.
 //!
-//! The XLI proprietary launcher (`deploy/npm/bin/xli.js`) sets these env vars
-//! before spawning the Rust binary, achieving a full rebrand with zero
-//! compile-time feature flags.
+//! The XLI proprietary launcher (`deploy/npm/bin/xli.js`) can override these
+//! env vars before spawning the Rust binary, achieving a full rebrand with
+//! zero compile-time feature flags.
 
 use std::sync::OnceLock;
 
@@ -23,7 +23,7 @@ fn brand() -> &'static Brand {
         let app_name = std::env::var("CODEX_APP_NAME")
             .ok()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "codex".to_string());
+            .unwrap_or_else(|| "xli".to_string());
 
         // Title case: "codex" -> "Codex", "xli" -> "XLI"
         let app_name_title_case = if app_name.chars().all(|c| c.is_ascii_lowercase()) && app_name.len() <= 4 {
@@ -45,7 +45,7 @@ fn brand() -> &'static Brand {
         let tagline = std::env::var("CODEX_APP_TAGLINE")
             .ok()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "OpenAI's command-line coding agent".to_string());
+            .unwrap_or_else(|| "Cross-LLM command-line coding agent".to_string());
 
         Brand {
             app_name,
@@ -56,19 +56,19 @@ fn brand() -> &'static Brand {
 }
 
 /// Lowercase app name for terminal titles, status bars, etc.
-/// Default: `"codex"`. XLI sets: `"xli"`.
+/// Default: `"xli"`. Override via `CODEX_APP_NAME`.
 pub(crate) fn app_name() -> &'static str {
     &brand().app_name
 }
 
 /// Title-case app name for welcome messages, descriptions.
-/// Default: `"Codex"`. XLI sets: `"XLI"`.
+/// Default: `"XLI"`. Override via `CODEX_APP_NAME`.
 pub(crate) fn app_name_display() -> &'static str {
     &brand().app_name_title_case
 }
 
 /// Tagline shown on the welcome screen.
-/// Default: `"OpenAI's command-line coding agent"`. XLI sets custom.
+/// Default: `"Cross-LLM command-line coding agent"`. Override via `CODEX_APP_TAGLINE`.
 pub(crate) fn app_tagline() -> &'static str {
     &brand().tagline
 }
