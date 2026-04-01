@@ -17,14 +17,15 @@ const XLI_JS = path.join(__dirname, "..", "bin", "xli.js");
 /**
  * Replicate the env-bridging logic from xli.js so we can unit-test
  * it in isolation.  If the launcher logic changes, keep this in sync.
+ *
+ * The launcher only sets XLI_HOME in the child env.  CODEX_HOME is no
+ * longer bridged — the Rust engine reads XLI_HOME natively (with
+ * CODEX_HOME as a legacy fallback).
  */
 function resolveXliEnv(processEnv) {
   const homeDir = os.homedir();
   const XLI_HOME = processEnv.XLI_HOME || path.join(homeDir, ".xli");
   const childEnv = { ...processEnv, XLI_HOME };
-  if (!processEnv.CODEX_HOME) {
-    childEnv.CODEX_HOME = XLI_HOME;
-  }
   return childEnv;
 }
 
@@ -33,23 +34,24 @@ function resolveXliEnv(processEnv) {
 describe("S-040 Home Isolation", () => {
   const home = os.homedir();
 
-  it("Case 1: both unset → defaults to ~/.xli", () => {
+  it("Case 1: both unset → XLI_HOME defaults to ~/.xli", () => {
     const env = resolveXliEnv({ HOME: home });
     assert.equal(env.XLI_HOME, path.join(home, ".xli"));
-    assert.equal(env.CODEX_HOME, path.join(home, ".xli"));
+    // CODEX_HOME is NOT bridged — Rust engine reads XLI_HOME natively
+    assert.equal(env.CODEX_HOME, undefined);
   });
 
-  it("Case 2: XLI_HOME set, CODEX_HOME unset → CODEX_HOME = XLI_HOME", () => {
+  it("Case 2: XLI_HOME set → used as-is", () => {
     const env = resolveXliEnv({ HOME: home, XLI_HOME: "/tmp/custom-xli" });
     assert.equal(env.XLI_HOME, "/tmp/custom-xli");
-    assert.equal(env.CODEX_HOME, "/tmp/custom-xli");
   });
 
-  it("Case 3: CODEX_HOME explicitly set → preserved", () => {
+  it("Case 3: CODEX_HOME explicitly set → passed through (legacy compat)", () => {
     const env = resolveXliEnv({
       HOME: home,
       CODEX_HOME: "/opt/my-codex-home",
     });
+    // CODEX_HOME passes through from the parent env unchanged
     assert.equal(env.CODEX_HOME, "/opt/my-codex-home");
     // XLI_HOME still defaults
     assert.equal(env.XLI_HOME, path.join(home, ".xli"));

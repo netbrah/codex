@@ -71,14 +71,14 @@ trust_level = "trusted"
 
     let fixture_path =
         codex_utils_cargo_bin::find_resource!("../core/tests/cli_responses_fixture.sse")?;
-    let codex = if let Ok(path) = codex_utils_cargo_bin::cargo_bin("codex") {
+    let codex = if let Ok(path) = codex_utils_cargo_bin::cargo_bin("xli") {
         path
     } else {
-        let fallback = repo_root.join("codex-rs/target/debug/codex");
+        let fallback = repo_root.join("codex-rs/target/debug/xli");
         if fallback.is_file() {
             fallback
         } else {
-            eprintln!("skipping integration test because codex binary is unavailable");
+            eprintln!("skipping integration test because xli binary is unavailable");
             return Ok(());
         }
     };

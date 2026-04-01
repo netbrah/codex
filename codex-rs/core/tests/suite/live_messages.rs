@@ -13,8 +13,29 @@
 //! S-013: Validates that the /messages wire produces real responses via
 //! a Claude-compatible endpoint.
 
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
+
+fn resolve_xli_binary() -> PathBuf {
+    // Allow overriding the binary via env var for release testing
+    for var in ["XLI_BINARY", "CODEX_BINARY"] {
+        if let Ok(path) = std::env::var(var) {
+            let p = PathBuf::from(&path);
+            if p.is_relative() {
+                let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                let workspace_root = manifest_dir.parent().unwrap();
+                let resolved = workspace_root.join(&p);
+                if resolved.exists() {
+                    return resolved;
+                }
+            } else if p.exists() {
+                return p;
+            }
+        }
+    }
+    codex_utils_cargo_bin::cargo_bin("xli").expect("xli binary not found in target/debug")
+}
 
 fn proxy_key() -> String {
     std::env::var("CODEX_LLM_PROXY_KEY")
@@ -55,7 +76,7 @@ struct RunResult {
 fn run_messages_exec(prompt: &str) -> RunResult {
     #![expect(clippy::unwrap_used)]
     let dir = TempDir::new().unwrap();
-    let codex_home = dir.path().join(".codex");
+    let codex_home = dir.path().join(".xli");
     std::fs::create_dir_all(&codex_home).unwrap();
 
     let config = format!(
@@ -77,8 +98,7 @@ trust_level = "trusted"
     );
     std::fs::write(codex_home.join("config.toml"), config).unwrap();
 
-    let binary =
-        codex_utils_cargo_bin::cargo_bin("codex").expect("codex binary not found in target/debug");
+    let binary = resolve_xli_binary();
 
     let output = Command::new(&binary)
         .arg("exec")
@@ -90,7 +110,7 @@ trust_level = "trusted"
         .env("CODEX_SANDBOX_NETWORK_DISABLED", "")
         .current_dir(dir.path())
         .output()
-        .expect("failed to spawn codex");
+        .expect("failed to spawn xli");
 
     RunResult {
         exit_code: output.status.code().unwrap_or(-1),
