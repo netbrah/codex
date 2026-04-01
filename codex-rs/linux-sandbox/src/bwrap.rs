@@ -3,7 +3,7 @@
 //! This module mirrors the semantics used by the macOS Seatbelt sandbox:
 //! - the filesystem is read-only by default,
 //! - explicit writable roots are layered on top, and
-//! - sensitive subpaths such as `.git` and `.codex` remain read-only even when
+//! - sensitive subpaths such as `.git` and `.xli` remain read-only even when
 //!   their parent root is writable.
 //!
 //! The overall Linux sandbox is composed of:
@@ -528,7 +528,7 @@ fn is_within_allowed_write_paths(path: &Path, allowed_write_paths: &[PathBuf]) -
 /// Find the first symlink along `target_path` that is also under a writable root.
 ///
 /// This blocks symlink replacement attacks where a protected path is a symlink
-/// inside a writable root (e.g., `.codex -> ./decoy`). In that case we mount
+/// inside a writable root (e.g., `.xli -> ./decoy`). In that case we mount
 /// `/dev/null` on the symlink itself to prevent rewiring it.
 fn find_symlink_in_path(target_path: &Path, allowed_write_paths: &[PathBuf]) -> Option<PathBuf> {
     let mut current = PathBuf::new();
@@ -781,12 +781,12 @@ mod tests {
                 "--bind".to_string(),
                 "/".to_string(),
                 "/".to_string(),
-                // Mask the default protected .codex subpath under that writable
+                // Mask the default protected .xli subpath under that writable
                 // root. Because the root is `/` in this test, the carveout path
-                // appears as `/.codex`.
+                // appears as `/.xli`.
                 "--ro-bind".to_string(),
                 "/dev/null".to_string(),
-                "/.codex".to_string(),
+                "/.xli".to_string(),
                 // Rebind /dev after the root bind so device nodes remain
                 // writable/usable inside the writable root.
                 "--bind".to_string(),
