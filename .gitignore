@@ -93,3 +93,6 @@ __pycache__/
 *.pyc
 
 api-reference
+
+# Superset worktree config
+.superset/
