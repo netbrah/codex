@@ -1002,7 +1002,6 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
             output_tokens: 20,
             reasoning_output_tokens: 0,
             total_tokens: 30,
-            cache_creation_input_tokens: 0,
         },
         last_token_usage: TokenUsage {
             input_tokens: 3,
@@ -1011,7 +1010,6 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
             output_tokens: 4,
             reasoning_output_tokens: 0,
             total_tokens: 7,
-            cache_creation_input_tokens: 0,
         },
         model_context_window: Some(1_000),
     };
@@ -1023,7 +1021,6 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
             output_tokens: 200,
             reasoning_output_tokens: 25,
             total_tokens: 375,
-            cache_creation_input_tokens: 0,
         },
         last_token_usage: TokenUsage {
             input_tokens: 10,
@@ -1032,7 +1029,6 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
             output_tokens: 20,
             reasoning_output_tokens: 5,
             total_tokens: 35,
-            cache_creation_input_tokens: 0,
         },
         model_context_window: Some(2_000),
     };

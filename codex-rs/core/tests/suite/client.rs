@@ -10,6 +10,7 @@ use codex_core::ThreadManager;
 use codex_core::WireApi;
 use codex_core::auth::AuthCredentialsStoreMode;
 use codex_core::built_in_model_providers;
+use codex_core::config::SamplingParams;
 use codex_core::default_client::originator;
 use codex_core::error::CodexErr;
 use codex_core::models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -857,6 +858,8 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
         provider,
         SessionSource::Exec,
         config.model_verbosity,
+        /*tool_choice*/ None,
+        /*messages_metadata_user_id*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -881,6 +884,7 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
             effort,
             summary.unwrap_or(ReasoningSummary::Auto),
             /*service_tier*/ None,
+            SamplingParams::default(),
             /*turn_metadata_header*/ None,
         )
         .await
@@ -2076,6 +2080,8 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
         provider.clone(),
         SessionSource::Exec,
         config.model_verbosity,
+        /*tool_choice*/ None,
+        /*messages_metadata_user_id*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -2092,6 +2098,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
             text: "content".into(),
         }]),
         encrypted_content: None,
+        raw_wire_block: None,
     });
     prompt.input.push(ResponseItem::Message {
         id: Some("message-id".into()),
@@ -2154,6 +2161,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
             effort,
             summary.unwrap_or(ReasoningSummary::Auto),
             /*service_tier*/ None,
+            SamplingParams::default(),
             /*turn_metadata_header*/ None,
         )
         .await

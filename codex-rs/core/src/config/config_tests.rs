@@ -3070,6 +3070,7 @@ struct PrecedenceTestFixture {
     model_provider_map: HashMap<String, ModelProviderInfo>,
     openai_provider: ModelProviderInfo,
     openai_custom_provider: ModelProviderInfo,
+    startup_warnings: Vec<String>,
 }
 
 impl PrecedenceTestFixture {
@@ -4346,9 +4347,22 @@ model_verbosity = "high"
         requires_openai_auth: false,
         supports_websockets: false,
     };
+    // The config loader reads OPENAI_BASE_URL from the environment and uses
+    // it as the openai provider's base_url (with a deprecation warning).
+    // Mirror this behavior so the expected values match the actual ones.
+    let openai_base_url_from_env = std::env::var("OPENAI_BASE_URL")
+        .ok()
+        .filter(|v| !v.is_empty());
+    let mut startup_warnings = Vec::new();
+    if openai_base_url_from_env.is_some() {
+        startup_warnings.push(
+            "`OPENAI_BASE_URL` is deprecated. Set `openai_base_url` in config.toml instead."
+                .to_string(),
+        );
+    }
     let model_provider_map = {
         let mut model_provider_map =
-            built_in_model_providers(/* openai_base_url */ /*openai_base_url*/ None);
+            built_in_model_providers(openai_base_url_from_env);
         model_provider_map.insert("openai-custom".to_string(), openai_custom_provider.clone());
         model_provider_map
     };
@@ -4365,6 +4379,7 @@ model_verbosity = "high"
         model_provider_map,
         openai_provider,
         openai_custom_provider,
+        startup_warnings,
     })
 }
 
@@ -4439,7 +4454,7 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             sqlite_home: fixture.codex_home(),
             log_dir: fixture.codex_home().join("log"),
             config_layer_stack: Default::default(),
-            startup_warnings: Vec::new(),
+            startup_warnings: fixture.startup_warnings.clone(),
             history: History::default(),
             ephemeral: false,
             file_opener: UriBasedFileOpener::VsCode,
@@ -4587,7 +4602,7 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         sqlite_home: fixture.codex_home(),
         log_dir: fixture.codex_home().join("log"),
         config_layer_stack: Default::default(),
-        startup_warnings: Vec::new(),
+        startup_warnings: fixture.startup_warnings.clone(),
         history: History::default(),
         ephemeral: false,
         file_opener: UriBasedFileOpener::VsCode,
@@ -4733,7 +4748,7 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         sqlite_home: fixture.codex_home(),
         log_dir: fixture.codex_home().join("log"),
         config_layer_stack: Default::default(),
-        startup_warnings: Vec::new(),
+        startup_warnings: fixture.startup_warnings.clone(),
         history: History::default(),
         ephemeral: false,
         file_opener: UriBasedFileOpener::VsCode,
@@ -4865,7 +4880,7 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         sqlite_home: fixture.codex_home(),
         log_dir: fixture.codex_home().join("log"),
         config_layer_stack: Default::default(),
-        startup_warnings: Vec::new(),
+        startup_warnings: fixture.startup_warnings.clone(),
         history: History::default(),
         ephemeral: false,
         file_opener: UriBasedFileOpener::VsCode,

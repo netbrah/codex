@@ -1738,11 +1738,6 @@ mod tests {
 
     #[test]
     fn orphan_cleanup_paired_preserved() {
-
-    // ── S-020 Sub-A: comprehensive translator tests ────────────────────
-
-    #[test]
-    fn multi_turn_alternating_user_assistant_tool_use_tool_result() {
         let input = vec![
             ResponseItem::Message {
                 id: None,
@@ -1771,46 +1766,6 @@ mod tests {
 
     #[test]
     fn orphan_cleanup_orphaned_function_call_removed() {
-
-                arguments: r#"{"command":"ls -la"}"#.to_string(),
-                call_id: "toolu_mt_01".to_string(),
-            },
-            ResponseItem::FunctionCallOutput {
-                call_id: "toolu_mt_01".to_string(),
-                output: FunctionCallOutputPayload::from_text("drwxr-xr-x  5 user".to_string()),
-            },
-            ResponseItem::Message {
-                id: None,
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: "Turn 2 final answer".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-        ];
-
-        let messages = conversation_to_anthropic_messages(&input, true);
-        assert_eq!(messages.len(), 6, "should have 6 messages for multi-turn with tool use");
-        assert_eq!(messages[0]["role"], "user");
-        assert_eq!(messages[0]["content"][0]["text"], "Turn 1 question");
-        assert_eq!(messages[1]["role"], "assistant");
-        assert_eq!(messages[1]["content"][0]["text"], "Turn 1 answer");
-        assert_eq!(messages[2]["role"], "user");
-        assert_eq!(messages[2]["content"][0]["text"], "Turn 2 question");
-        assert_eq!(messages[3]["role"], "assistant");
-        assert_eq!(messages[3]["content"][0]["type"], "tool_use");
-        assert_eq!(messages[3]["content"][0]["name"], "shell");
-        assert_eq!(messages[4]["role"], "user");
-        assert_eq!(messages[4]["content"][0]["type"], "tool_result");
-        assert_eq!(messages[5]["role"], "assistant");
-        assert_eq!(messages[5]["content"][0]["text"], "Turn 2 final answer");
-    }
-
-    #[test]
-    fn thinking_preserved_in_latest_stripped_from_earlier_content_field() {
-        use codex_protocol::models::ReasoningItemContent;
-
         let input = vec![
             ResponseItem::Message {
                 id: None,
@@ -1949,7 +1904,253 @@ mod tests {
     fn orphan_cleanup_integration_with_translation() {
         // Verify that conversation_to_anthropic_messages handles orphans
         // gracefully (no panic, orphaned items produce no output).
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "do it".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            // Orphaned call — should be stripped before translation
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: r#"{"command":"ls"}"#.to_string(),
+                call_id: "toolu_gone".to_string(),
+            },
+        ];
+        let messages = conversation_to_anthropic_messages(&input, true);
+        // After orphan removal only the user message survives.
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+    }
+}
 
+// ── S-008: Modality gating tests ────────────────────────────────────
+
+#[cfg(test)]
+mod modality_gating_tests {
+    use super::*;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::ResponseItem;
+
+    /// Helper to build a user message with given content items.
+    fn user_msg(content: Vec<ContentItem>) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content,
+            end_turn: None,
+            phase: None,
+        }
+    }
+
+    // ── Test 1: image-capable model → image block passes through ────
+
+    #[test]
+    fn image_capable_model_passes_through_image_block() {
+        let input = vec![user_msg(vec![ContentItem::InputImage {
+            image_url: "https://example.com/photo.png".to_string(),
+        }])];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+
+        assert_eq!(messages.len(), 1);
+        let block = &messages[0]["content"][0];
+        assert_eq!(block["type"], "image", "image block should pass through");
+        assert_eq!(block["source"]["type"], "url");
+        assert_eq!(block["source"]["url"], "https://example.com/photo.png");
+    }
+
+    // ── Test 2: text-only model → image replaced with placeholder ───
+
+    #[test]
+    fn text_only_model_replaces_image_with_placeholder() {
+        let input = vec![user_msg(vec![ContentItem::InputImage {
+            image_url: "https://example.com/photo.png".to_string(),
+        }])];
+
+        let messages = conversation_to_anthropic_messages(&input, false);
+
+        assert_eq!(messages.len(), 1);
+        let block = &messages[0]["content"][0];
+        assert_eq!(
+            block["type"], "text",
+            "image should be replaced with text placeholder"
+        );
+        let text = block["text"].as_str().unwrap();
+        assert!(
+            text.contains("[Image:"),
+            "placeholder should start with [Image:"
+        );
+        assert!(
+            text.contains("does not support image input"),
+            "placeholder should explain that the model doesn't support images"
+        );
+        assert!(
+            text.contains("https://example.com/photo.png"),
+            "placeholder should include the original URL"
+        );
+    }
+
+    // ── Test 3: mixed content with text-only model ──────────────────
+
+    #[test]
+    fn mixed_content_text_only_model_replaces_image_preserves_text() {
+        let input = vec![user_msg(vec![
+            ContentItem::InputText {
+                text: "Please describe this image:".to_string(),
+            },
+            ContentItem::InputImage {
+                image_url: "data:image/png;base64,iVBOR...".to_string(),
+            },
+            ContentItem::InputText {
+                text: "What do you see?".to_string(),
+            },
+        ])];
+
+        let messages = conversation_to_anthropic_messages(&input, false);
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3, "should have 3 content blocks");
+
+        // First block: text preserved
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Please describe this image:");
+
+        // Second block: image replaced with text placeholder
+        assert_eq!(
+            content[1]["type"], "text",
+            "image should become text placeholder"
+        );
+        let placeholder = content[1]["text"].as_str().unwrap();
+        assert!(
+            placeholder.contains("[Image:"),
+            "placeholder should indicate it was an image"
+        );
+        assert!(
+            placeholder.contains("data:image/png;base64,iVBOR..."),
+            "placeholder should include original URL"
+        );
+
+        // Third block: text preserved
+        assert_eq!(content[2]["type"], "text");
+        assert_eq!(content[2]["text"], "What do you see?");
+    }
+}
+
+// ── S-020: comprehensive translator + thinking tests ────────────────────
+
+#[cfg(test)]
+mod translator_tests {
+    use super::*;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::FunctionCallOutputPayload;
+    use codex_protocol::models::ResponseItem;
+
+    // ── S-020 Sub-A: comprehensive translator tests ────────────────────
+
+    #[test]
+    fn multi_turn_alternating_user_assistant_tool_use_tool_result() {
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Turn 1 question".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "Turn 1 answer".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Turn 2 question".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: r#"{"command":"ls -la"}"#.to_string(),
+                call_id: "toolu_mt_01".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_mt_01".to_string(),
+                output: FunctionCallOutputPayload::from_text("drwxr-xr-x  5 user".to_string()),
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "Turn 2 final answer".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let messages = conversation_to_anthropic_messages(&input, true);
+        assert_eq!(messages.len(), 6, "should have 6 messages for multi-turn with tool use");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"][0]["text"], "Turn 1 question");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["text"], "Turn 1 answer");
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"][0]["text"], "Turn 2 question");
+        assert_eq!(messages[3]["role"], "assistant");
+        assert_eq!(messages[3]["content"][0]["type"], "tool_use");
+        assert_eq!(messages[3]["content"][0]["name"], "shell");
+        assert_eq!(messages[4]["role"], "user");
+        assert_eq!(messages[4]["content"][0]["type"], "tool_result");
+        assert_eq!(messages[5]["role"], "assistant");
+        assert_eq!(messages[5]["content"][0]["text"], "Turn 2 final answer");
+    }
+
+    #[test]
+    fn thinking_preserved_in_latest_stripped_from_earlier_content_field() {
+        use codex_protocol::models::ReasoningItemContent;
+
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "First".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Reasoning {
+                id: String::new(),
+                summary: Vec::new(),
+                content: Some(vec![ReasoningItemContent::ReasoningText {
+                    text: "Old thinking via content".to_string(),
+                }]),
+                encrypted_content: Some("old_content_sig".to_string()),
+                raw_wire_block: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "read_file".to_string(),
+                namespace: None,
                 arguments: r#"{"path":"main.rs"}"#.to_string(),
                 call_id: "toolu_think_01".to_string(),
             },
@@ -2097,7 +2298,7 @@ mod tests {
 
     #[test]
     fn empty_conversation_yields_empty_messages() {
-        let messages = conversation_to_anthropic_messages(&[]);
+        let messages = conversation_to_anthropic_messages(&[], true);
         assert!(messages.is_empty(), "empty input must produce empty output");
     }
 
@@ -2128,6 +2329,10 @@ mod tests {
                 namespace: None,
                 arguments: nested_args,
                 call_id: "toolu_nested_01".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "toolu_nested_01".to_string(),
+                output: FunctionCallOutputPayload::from_text("Files created".to_string()),
             },
         ];
 
@@ -2185,156 +2390,6 @@ mod tests {
         assert_eq!(content[1]["text"], "Part 2 of question");
         assert_eq!(content[2]["text"], "Part 3 of question");
     }
-
-    #[test]
-    fn orphan_cleanup_orphaned_function_call_no_output() {
-        let input = vec![
-            ResponseItem::Message {
-                id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: "Run command".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-            ResponseItem::FunctionCall {
-                id: None,
-                name: "shell".to_string(),
-                namespace: None,
-                arguments: r#"{"command":"ls"}"#.to_string(),
-                call_id: "toolu_gone".to_string(),
-            },
-        ];
-        let messages = conversation_to_anthropic_messages(&input, true);
-        // After orphan removal only the user message survives.
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0]["role"], "user");
-    }
-}
-
-// ── S-008: Modality gating tests ────────────────────────────────────
-
-#[cfg(test)]
-mod modality_gating_tests {
-    use super::*;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::ResponseItem;
-
-    /// Helper to build a user message with given content items.
-    fn user_msg(content: Vec<ContentItem>) -> ResponseItem {
-        ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content,
-            end_turn: None,
-            phase: None,
-        }
-    }
-
-    // ── Test 1: image-capable model → image block passes through ────
-
-    #[test]
-    fn image_capable_model_passes_through_image_block() {
-        let input = vec![user_msg(vec![ContentItem::InputImage {
-            image_url: "https://example.com/photo.png".to_string(),
-        }])];
-
-        let messages = conversation_to_anthropic_messages(&input, true);
-
-        assert_eq!(messages.len(), 1);
-        let block = &messages[0]["content"][0];
-        assert_eq!(block["type"], "image", "image block should pass through");
-        assert_eq!(block["source"]["type"], "url");
-        assert_eq!(block["source"]["url"], "https://example.com/photo.png");
-    }
-
-    // ── Test 2: text-only model → image replaced with placeholder ───
-
-    #[test]
-    fn text_only_model_replaces_image_with_placeholder() {
-        let input = vec![user_msg(vec![ContentItem::InputImage {
-            image_url: "https://example.com/photo.png".to_string(),
-        }])];
-
-        let messages = conversation_to_anthropic_messages(&input, false);
-
-        assert_eq!(messages.len(), 1);
-        let block = &messages[0]["content"][0];
-        assert_eq!(
-            block["type"], "text",
-            "image should be replaced with text placeholder"
-        );
-        let text = block["text"].as_str().unwrap();
-        assert!(
-            text.contains("[Image:"),
-            "placeholder should start with [Image:"
-        );
-        assert!(
-            text.contains("does not support image input"),
-            "placeholder should explain that the model doesn't support images"
-        );
-        assert!(
-            text.contains("https://example.com/photo.png"),
-            "placeholder should include the original URL"
-        );
-    }
-
-    // ── Test 3: mixed content with text-only model ──────────────────
-
-    #[test]
-    fn mixed_content_text_only_model_replaces_image_preserves_text() {
-        let input = vec![user_msg(vec![
-            ContentItem::InputText {
-                text: "Please describe this image:".to_string(),
-            },
-            ContentItem::InputImage {
-                image_url: "data:image/png;base64,iVBOR...".to_string(),
-            },
-            ContentItem::InputText {
-                text: "What do you see?".to_string(),
-            },
-        ])];
-
-        let messages = conversation_to_anthropic_messages(&input, false);
-
-        assert_eq!(messages.len(), 1);
-        let content = messages[0]["content"].as_array().unwrap();
-        assert_eq!(content.len(), 3, "should have 3 content blocks");
-
-        // First block: text preserved
-        assert_eq!(content[0]["type"], "text");
-        assert_eq!(content[0]["text"], "Please describe this image:");
-
-        // Second block: image replaced with text placeholder
-        assert_eq!(
-            content[1]["type"], "text",
-            "image should become text placeholder"
-        );
-        let placeholder = content[1]["text"].as_str().unwrap();
-        assert!(
-            placeholder.contains("[Image:"),
-            "placeholder should indicate it was an image"
-        );
-        assert!(
-            placeholder.contains("data:image/png;base64,iVBOR..."),
-            "placeholder should include original URL"
-        );
-
-        // Third block: text preserved
-        assert_eq!(content[2]["type"], "text");
-        assert_eq!(content[2]["text"], "What do you see?");
-    }
-}
-
-// ── S-020 Sub-A: additional comprehensive translator tests ─────────
-
-#[cfg(test)]
-mod s020_comprehensive_tests {
-    use super::*;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::FunctionCallOutputPayload;
-    use codex_protocol::models::ResponseItem;
 
     #[test]
     fn function_call_output_with_error_status() {

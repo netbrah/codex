@@ -4,6 +4,7 @@ use std::sync::Arc;
 use codex_core::CodexAuth;
 use codex_core::ModelClient;
 use codex_core::ModelProviderInfo;
+use codex_core::config::SamplingParams;
 use codex_core::Prompt;
 use codex_core::ResponseEvent;
 use codex_core::WireApi;
@@ -93,6 +94,8 @@ async fn responses_stream_includes_subagent_header_on_review() {
         provider.clone(),
         session_source,
         config.model_verbosity,
+        /*tool_choice*/ None,
+        /*messages_metadata_user_id*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -118,6 +121,7 @@ async fn responses_stream_includes_subagent_header_on_review() {
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
             /*service_tier*/ None,
+            SamplingParams::default(),
             /*turn_metadata_header*/ None,
         )
         .await
@@ -207,6 +211,8 @@ async fn responses_stream_includes_subagent_header_on_other() {
         provider.clone(),
         session_source,
         config.model_verbosity,
+        /*tool_choice*/ None,
+        /*messages_metadata_user_id*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -232,6 +238,7 @@ async fn responses_stream_includes_subagent_header_on_other() {
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
             /*service_tier*/ None,
+            SamplingParams::default(),
             /*turn_metadata_header*/ None,
         )
         .await
@@ -320,6 +327,8 @@ async fn responses_respects_model_info_overrides_from_config() {
         provider.clone(),
         session_source,
         config.model_verbosity,
+        /*tool_choice*/ None,
+        /*messages_metadata_user_id*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -345,6 +354,7 @@ async fn responses_respects_model_info_overrides_from_config() {
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
             /*service_tier*/ None,
+            SamplingParams::default(),
             /*turn_metadata_header*/ None,
         )
         .await
