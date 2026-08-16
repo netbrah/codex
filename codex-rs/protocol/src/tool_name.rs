@@ -43,6 +43,25 @@ impl ToolName {
         self
     }
 
+    /// Constructs a `ToolName` from Responses API function-call fields,
+    /// recovering the namespace from flattened (dotted) names.
+    ///
+    /// Providers such as vLLM do not support the `namespace` tool type.
+    /// When namespace tools are flattened into individual functions named
+    /// `namespace.tool_name`, the call comes back with `namespace: None` and
+    /// the full dotted name in `name`. This method splits it back out so the
+    /// registry lookup matches the originally registered `ToolName`.
+    pub fn from_response_fields(namespace: Option<String>, name: String) -> Self {
+        let (namespace, name) = match namespace {
+            Some(ns) => (Some(ns), name),
+            None => match name.split_once(".") {
+                Some((ns, rest)) => (Some(ns.to_string()), rest.to_string()),
+                None => (None, name),
+            },
+        };
+        Self::new(namespace, name).with_default_namespace()
+    }
+
     pub fn is_default_namespace(&self) -> bool {
         matches!(
             self.namespace.as_deref(),
@@ -92,3 +111,7 @@ impl From<&str> for ToolName {
         Self::plain(name)
     }
 }
+
+#[cfg(test)]
+#[path = "tool_name_tests.rs"]
+mod tests;
