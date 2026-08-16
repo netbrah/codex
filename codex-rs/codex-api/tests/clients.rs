@@ -577,6 +577,7 @@ async fn azure_store_sends_ids_and_headers() -> Result<()> {
                 session_source: Some(SessionSource::SubAgent(SubAgentSource::Review)),
                 extra_headers,
                 compression: Compression::None,
+                normalize_content_types: false,
                 turn_state: None,
             },
         )

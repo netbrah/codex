@@ -1,3 +1,4 @@
+pub(crate) mod content_type_compat;
 pub(crate) mod images;
 pub(crate) mod memories;
 pub(crate) mod models;

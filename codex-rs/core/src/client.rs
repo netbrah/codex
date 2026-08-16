@@ -1247,6 +1247,12 @@ impl ModelClientSession {
                 headers
             },
             compression,
+            normalize_content_types: self
+                .client
+                .state
+                .provider
+                .capabilities()
+                .normalize_content_types,
             turn_state: Some(Arc::clone(&self.turn_state)),
         }
     }

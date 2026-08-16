@@ -58,6 +58,7 @@ pub enum RemoteCompactionSupport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderCapabilities {
     pub namespace_tools: bool,
+    pub normalize_content_types: bool,
     pub image_generation: bool,
     pub web_search: bool,
     pub external_web_access: bool,
@@ -68,6 +69,7 @@ impl Default for ProviderCapabilities {
     fn default() -> Self {
         Self {
             namespace_tools: true,
+            normalize_content_types: false,
             image_generation: true,
             web_search: true,
             external_web_access: true,
@@ -360,6 +362,7 @@ impl ModelProvider for ConfiguredModelProvider {
         };
 
         ProviderCapabilities {
+            normalize_content_types: !self.info.is_openai(),
             remote_compaction,
             ..ProviderCapabilities::default()
         }

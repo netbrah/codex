@@ -1,6 +1,7 @@
 use crate::auth::SharedAuthProvider;
 use crate::common::ResponseStream;
 use crate::common::ResponsesApiRequest;
+use crate::endpoint::content_type_compat::normalize_content_types as normalize_content_type_strings;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
@@ -60,6 +61,7 @@ pub struct ResponsesOptions {
     pub extra_headers: HeaderMap,
     pub compression: Compression,
     pub turn_state: Option<Arc<OnceLock<String>>>,
+    pub normalize_content_types: bool,
 }
 
 impl<T: HttpTransport> ResponsesClient<T> {
@@ -110,10 +112,20 @@ impl<T: HttpTransport> ResponsesClient<T> {
             session_source,
             extra_headers,
             compression,
+            normalize_content_types,
             turn_state,
         } = options;
-        let body = EncodedJsonBody::encode(&request)
-            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
+        let body = if normalize_content_types {
+            let mut value = serde_json::to_value(&request).map_err(|e| {
+                ApiError::Stream(format!("failed to encode responses request: {e}"))
+            })?;
+            normalize_content_type_strings(&mut value);
+            EncodedJsonBody::encode(&value)
+                .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?
+        } else {
+            EncodedJsonBody::encode(&request)
+                .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?
+        };
 
         let mut headers = extra_headers;
         if let Some(ref thread_id) = thread_id {
