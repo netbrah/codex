@@ -411,3 +411,71 @@ fn tool_search_tool_spec_serializes_expected_wire_shape() {
         })
     );
 }
+
+#[test]
+fn flatten_namespace_specs_expands_namespace_into_dotted_functions() {
+    use crate::ResponsesApiNamespace;
+    use crate::ResponsesApiNamespaceTool;
+
+    let namespace = ToolSpec::Namespace(ResponsesApiNamespace {
+        name: "collaboration".to_string(),
+        description: "Collab tools".to_string(),
+        tools: vec![
+            ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "spawn_agent".to_string(),
+                description: "Spawn a sub-agent".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(
+                    std::collections::BTreeMap::new(),
+                    None,
+                    Some(false.into()),
+                ),
+                output_schema: None,
+            }),
+            ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "list_agents".to_string(),
+                description: "List agents".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(
+                    std::collections::BTreeMap::new(),
+                    None,
+                    Some(false.into()),
+                ),
+                output_schema: None,
+            }),
+        ],
+    });
+    let function_tool = ToolSpec::Function(ResponsesApiTool {
+        name: "exec_command".to_string(),
+        description: "Run a command".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(std::collections::BTreeMap::new(), None, Some(false.into())),
+        output_schema: None,
+    });
+
+    let flattened = flatten_namespace_specs(&[function_tool.clone(), namespace]);
+
+    assert_eq!(flattened.len(), 3);
+    assert_eq!(flattened[0].name(), "exec_command");
+    assert_eq!(flattened[1].name(), "collaboration.spawn_agent");
+    assert_eq!(flattened[2].name(), "collaboration.list_agents");
+}
+
+#[test]
+fn flatten_namespace_specs_preserves_non_namespace_specs() {
+    let function_tool = ToolSpec::Function(ResponsesApiTool {
+        name: "exec_command".to_string(),
+        description: "Run a command".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(std::collections::BTreeMap::new(), None, Some(false.into())),
+        output_schema: None,
+    });
+
+    let flattened = flatten_namespace_specs(&[function_tool.clone()]);
+    assert_eq!(flattened.len(), 1);
+    assert_eq!(flattened[0], function_tool);
+}

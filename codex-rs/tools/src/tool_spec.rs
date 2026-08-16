@@ -148,6 +148,41 @@ pub fn create_tools_raw_json_for_responses_api(
     serde_json::value::to_raw_value(tools).map(Arc::from)
 }
 
+/// Expands `ToolSpec::Namespace` entries into individual `ToolSpec::Function`
+/// (or `ToolSpec::Freeform`) entries with dotted names (`namespace.tool_name`).
+///
+/// Providers such as vLLM do not support the `namespace` tool type and silently
+/// drop namespace tools. Flattening rewrites them as top-level function tools
+/// so the model can discover and call them. The dotted name is split back into
+/// namespace + name by [`ToolName::from_response_fields`] on dispatch.
+pub fn flatten_namespace_specs(specs: &[ToolSpec]) -> Vec<ToolSpec> {
+    let mut flattened = Vec::with_capacity(specs.len());
+    for spec in specs {
+        match spec {
+            ToolSpec::Namespace(namespace) => {
+                for tool in &namespace.tools {
+                    match tool {
+                        ResponsesApiNamespaceTool::Function(tool) => {
+                            let mut tool = tool.clone();
+                            tool.name = format!("{}.{}", namespace.name, tool.name);
+                            flattened.push(ToolSpec::Function(tool));
+                        }
+                        ResponsesApiNamespaceTool::Custom(tool) => {
+                            let mut tool = tool.clone();
+                            tool.name = format!("{}.{}", namespace.name, tool.name);
+                            flattened.push(ToolSpec::Freeform(tool));
+                        }
+                    }
+                }
+            }
+            other => {
+                flattened.push(other.clone());
+            }
+        }
+    }
+    flattened
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ResponsesApiWebSearchFilters {
     #[serde(skip_serializing_if = "Option::is_none")]

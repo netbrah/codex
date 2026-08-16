@@ -161,7 +161,7 @@ impl ToolRouter {
                 call_id,
                 ..
             } => {
-                let tool_name = ToolName::new(namespace, name).with_default_namespace();
+                let tool_name = ToolName::from_response_fields(namespace, name);
                 Ok(Some(ToolCall {
                     tool_name,
                     call_id,
@@ -195,12 +195,15 @@ impl ToolRouter {
                 input,
                 call_id,
                 ..
-            } => Ok(Some(ToolCall {
-                tool_name: ToolName::new(namespace, name).with_default_namespace(),
-                call_id,
-                payload: ToolPayload::Custom { input },
-                encrypted_function_args: None,
-            })),
+            } => {
+                let tool_name = ToolName::from_response_fields(namespace, name);
+                Ok(Some(ToolCall {
+                    tool_name,
+                    call_id,
+                    payload: ToolPayload::Custom { input },
+                    encrypted_function_args: None,
+                }))
+            }
             _ => Ok(None),
         }
     }
