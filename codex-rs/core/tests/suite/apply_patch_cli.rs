@@ -5,6 +5,7 @@ use codex_core::StartThreadOptions;
 use codex_core::TurnInputRequest;
 use core_test_support::responses::ev_apply_patch_custom_tool_call;
 use core_test_support::responses::ev_apply_patch_exec_command_call_via_heredoc;
+use core_test_support::responses::ev_apply_patch_function_call;
 use core_test_support::responses::ev_exec_command_call;
 use core_test_support::test_codex::ApplyPatchModelOutput;
 use pretty_assertions::assert_eq;
@@ -51,6 +52,7 @@ use codex_utils_path_uri::PathUri;
 use core_test_support::PathBufExt;
 use core_test_support::TestTargetOs;
 use core_test_support::assert_regex_match;
+use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_exec_command_call_with_args;
@@ -241,6 +243,19 @@ pub async fn mount_apply_patch(
         ),
     )
     .await;
+}
+
+async fn mount_apply_patch_function_call(
+    harness: &TestCodexHarness,
+    call_id: &str,
+    patch: &str,
+    assistant_msg: &str,
+) -> ResponseMock {
+    mount_sse_sequence(
+        harness.server(),
+        apply_patch_responses(call_id, patch, assistant_msg, ev_apply_patch_function_call),
+    )
+    .await
 }
 
 async fn mount_apply_patch_model_output(
@@ -2483,5 +2498,128 @@ async fn apply_patch_change_context_disambiguates_target() -> Result<()> {
 
     let contents = harness.read_file_text("multi_ctx.txt").await?;
     assert_eq!(contents, "fn a\nx=10\ny=2\nfn b\nx=11\ny=20\n");
+    Ok(())
+}
+
+// Spec T4: end-to-end coverage on a renamed non-OpenAI provider. The default
+// `test_codex()` provider is named "OpenAI" (freeform path); renaming it
+// switches the served `apply_patch` to the function-tool form (spec §3.1 P1
+// + the function-tool capability gate).
+async fn vllm_apply_patch_harness() -> Result<TestCodexHarness> {
+    apply_patch_harness_with(|builder| {
+        builder.with_config(|config| {
+            config.model_provider.name = "vLLM".to_string();
+        })
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_patch_cli_function_tool_served_to_non_openai_provider() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let harness = vllm_apply_patch_harness().await?;
+    let patch = "*** Begin Patch\n*** Add File: wire-shape.txt\n+function tool\n*** End Patch\n";
+    let call_id = "apply-vllm-wire";
+    let mock = mount_apply_patch_function_call(&harness, call_id, patch, "done").await;
+
+    harness
+        .submit("create wire-shape.txt with apply_patch")
+        .await?;
+
+    let requests = mock.requests();
+    let body = requests
+        .first()
+        .expect("the turn should have posted to /v1/responses")
+        .body_json();
+    let apply_patch_tool = body["tools"]
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "apply_patch"))
+        .expect("the model request should advertise apply_patch");
+    assert_eq!(apply_patch_tool["type"], json!("function"));
+    let description = apply_patch_tool
+        .pointer("/parameters/properties/patch/description")
+        .and_then(|value| value.as_str())
+        .expect("the patch parameter should carry the format description");
+    for substring in [
+        "first line is `*** Begin Patch`",
+        "real newline characters",
+        "bare '+'",
+        "at most one hunk per patch",
+        "starts with '+'",
+        "multiple `@@` chunks",
+        "must change at least one line",
+    ] {
+        assert!(
+            description.contains(substring),
+            "patch argument description missing: {substring}"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_patch_cli_function_tool_applies_f1_shaped_raw_add_file() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let harness = vllm_apply_patch_harness().await?;
+    // F1 shape (spec §1.1): raw markdown Add-File — the content lines carry
+    // no per-line `+` prefix and the first content line is an H1.
+    let patch = "*** Begin Patch\n\
+*** Add File: grok/plans/spec-freeze-r23-glm.md\n\
+# SPEC-FREEZE-1 ROUND 23 — REVIEW RUN 2 of 3 (apex-ayl.45)\n\
+Freeze holds until the round-23 review lands.\n\
+\n\
+| field | value |\n\
+| --- | --- |\n\
+*** End Patch\n";
+    let call_id = "apply-vllm-raw-add";
+    mount_apply_patch_function_call(&harness, call_id, patch, "done").await;
+
+    harness
+        .submit("write the round-23 spec-freeze note with apply_patch")
+        .await?;
+
+    assert_eq!(
+        harness
+            .read_file_text("grok/plans/spec-freeze-r23-glm.md")
+            .await?,
+        "# SPEC-FREEZE-1 ROUND 23 — REVIEW RUN 2 of 3 (apex-ayl.45)\nFreeze holds until the round-23 review lands.\n\n| field | value |\n| --- | --- |\n"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_patch_cli_function_tool_raw_add_file_overwrites_existing_file() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let harness = vllm_apply_patch_harness().await?;
+    harness
+        .write_file(
+            "overwrite-me.md",
+            "stale content that the overwrite must replace\n",
+        )
+        .await?;
+    // Same F1 shape (spec §1.1) targeting an existing file: the raw Add-File
+    // must overwrite without any existence check.
+    let patch = "*** Begin Patch\n\
+*** Add File: overwrite-me.md\n\
+# Overwritten via raw Add-File\n\
+The overwrite is byte-exact.\n\
+*** End Patch\n";
+    let call_id = "apply-vllm-raw-overwrite";
+    mount_apply_patch_function_call(&harness, call_id, patch, "done").await;
+
+    harness
+        .submit("overwrite overwrite-me.md with apply_patch")
+        .await?;
+
+    assert_eq!(
+        harness.read_file_text("overwrite-me.md").await?,
+        "# Overwritten via raw Add-File\nThe overwrite is byte-exact.\n"
+    );
+
     Ok(())
 }

@@ -1034,6 +1034,17 @@ pub fn ev_apply_patch_exec_command_call_via_heredoc(call_id: &str, patch: &str) 
     ev_function_call(call_id, "exec_command", &arguments)
 }
 
+/// Convenience: SSE event for an `apply_patch` function call with raw patch
+/// text in the `patch` argument. This mirrors the payload produced by the
+/// Responses API when a non-OpenAI provider invokes `apply_patch` as a
+/// function tool.
+pub fn ev_apply_patch_function_call(call_id: &str, patch: &str) -> Value {
+    let args = serde_json::json!({ "patch": patch });
+    let arguments = serde_json::to_string(&args).expect("serialize apply_patch arguments");
+
+    ev_function_call(call_id, "apply_patch", &arguments)
+}
+
 pub fn sse_failed(id: &str, code: &str, message: &str) -> String {
     sse(vec![serde_json::json!({
         "type": "response.failed",
