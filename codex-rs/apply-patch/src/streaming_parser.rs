@@ -198,7 +198,7 @@ impl StreamingPatchParser {
                 }
                 Err(InvalidHunkError {
                     message: format!(
-                        "'{trimmed}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
+                        "'{trimmed}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}' After '*** Begin Patch', the next line must be a hunk header (e.g. '*** Add File: <path>' with every content line prefixed by '+'), or '*** Environment ID: <id>' in multi-environment sessions."
                     ),
                     line_number: self.line_number,
                 })
@@ -225,9 +225,8 @@ impl StreamingPatchParser {
                     return Ok(());
                 }
                 Err(InvalidHunkError {
-                    message: format!(
-                        "'{trimmed}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
-                    ),
+                    message: "'Delete File' hunks take no content lines; the next line must be another hunk header or '*** End Patch'"
+                        .to_string(),
                     line_number: self.line_number,
                 })
             }
@@ -836,7 +835,7 @@ mod tests {
         assert_eq!(
             parser.push_delta("bad\n"),
             Err(InvalidHunkError {
-                message: "'bad' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'"
+                message: "'bad' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}' After '*** Begin Patch', the next line must be a hunk header (e.g. '*** Add File: <path>' with every content line prefixed by '+'), or '*** Environment ID: <id>' in multi-environment sessions."
                     .to_string(),
                 line_number: 2,
             })
@@ -855,7 +854,7 @@ mod tests {
         assert_eq!(
             parser.push_delta("*** Begin Patch\n*** Delete File: file.txt\nbad\n"),
             Err(InvalidHunkError {
-                message: "'bad' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'"
+                message: "'Delete File' hunks take no content lines; the next line must be another hunk header or '*** End Patch'"
                     .to_string(),
                 line_number: 3,
             })

@@ -507,7 +507,7 @@ happen inside workflow subagents):
 |---|---|---|---|---|
 | 1 | impl-item1-tdd-evidence.md §Sub-case 1 (RED, try 2) | evidence §Gates 115/115 + §Sub-cases 3–12 (GREEN) | r1 seats A/B 0B+0M (A: 1n; B: 3n) | `e21f608ac4` |
 | 2 | impl-item2-tdd-evidence.md §T2.1 (RED, deterministic) | evidence §Gates: 0 deterministic failures (98 pass; 14 TMT = pre-existing baseline, m-1 corrected) | r1 seats A/B 0B+0M (A: 1m/4n; B: 3m/3n; m/n fixed in evidence pre-commit) | `a4d5af1f62` |
-| 3 | — | — | — | — |
+| 3 | impl-item3-tdd-evidence.md §Steps 2–6 (12→10→9→9→0 red window) | evidence §Gates: apply-patch 115/115; core 0 deterministic failures (lib.rs:388 load class); T3.1/T3.2 green | r1 seats A/B 0B/1M (shared, 1-line comment fix) → r2 seats C/D 0B+0M (2m/3n doc-only, fixed pre-commit) | <fill post-commit> |
 | 4 | — | — | — | — |
 | 5 | — | — | — | — |
 | 6 | — | — | — (operator-gated) | — |

@@ -266,10 +266,10 @@ fn check_start_and_end_lines_strict(
             Ok(())
         }
         (Some(first), _) if first != BEGIN_PATCH_MARKER => Err(InvalidPatchError(String::from(
-            "The first line of the patch must be '*** Begin Patch'",
+            "The first line of the patch must be '*** Begin Patch'. The patch body starts on the next line with a hunk header (e.g. '*** Add File: <path>') and ends with the line '*** End Patch'.",
         ))),
         _ => Err(InvalidPatchError(String::from(
-            "The last line of the patch must be '*** End Patch'",
+            "The last line of the patch must be '*** End Patch'. The terminator line is exactly '*** End Patch' with no '+' or other prefix and no lines after it.",
         ))),
     }
 }
@@ -279,13 +279,13 @@ fn test_parse_patch() {
     assert_eq!(
         parse_patch_text("bad", ParseMode::Strict),
         Err(InvalidPatchError(
-            "The first line of the patch must be '*** Begin Patch'".to_string()
+            "The first line of the patch must be '*** Begin Patch'. The patch body starts on the next line with a hunk header (e.g. '*** Add File: <path>') and ends with the line '*** End Patch'.".to_string()
         ))
     );
     assert_eq!(
         parse_patch_text("*** Begin Patch\nbad", ParseMode::Strict),
         Err(InvalidPatchError(
-            "The last line of the patch must be '*** End Patch'".to_string()
+            "The last line of the patch must be '*** End Patch'. The terminator line is exactly '*** End Patch' with no '+' or other prefix and no lines after it.".to_string()
         ))
     );
 
@@ -574,7 +574,9 @@ fn test_parse_patch_lenient() {
         }],
     }];
     let expected_error =
-        InvalidPatchError("The first line of the patch must be '*** Begin Patch'".to_string());
+        InvalidPatchError(
+            "The first line of the patch must be '*** Begin Patch'. The patch body starts on the next line with a hunk header (e.g. '*** Add File: <path>') and ends with the line '*** End Patch'.".to_string(),
+        );
 
     let patch_text_in_heredoc = format!("<<EOF\n{patch_text}\nEOF\n");
     assert_eq!(
@@ -640,7 +642,7 @@ fn test_parse_patch_lenient() {
     assert_eq!(
         parse_patch_text(&patch_text_with_missing_closing_heredoc, ParseMode::Lenient),
         Err(InvalidPatchError(
-            "The last line of the patch must be '*** End Patch'".to_string()
+            "The last line of the patch must be '*** End Patch'. The terminator line is exactly '*** End Patch' with no '+' or other prefix and no lines after it.".to_string()
         ))
     );
 }

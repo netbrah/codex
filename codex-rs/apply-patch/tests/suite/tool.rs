@@ -390,7 +390,7 @@ fn test_apply_patch_cli_rejects_invalid_hunk_header() -> anyhow::Result<()> {
         .arg("*** Begin Patch\n*** Frobnicate File: foo\n*** End Patch")
         .assert()
         .failure()
-        .stderr("Invalid patch hunk on line 2: '*** Frobnicate File: foo' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'\n");
+        .stderr("Invalid patch hunk on line 2: '*** Frobnicate File: foo' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}' After '*** Begin Patch', the next line must be a hunk header (e.g. '*** Add File: <path>' with every content line prefixed by '+'), or '*** Environment ID: <id>' in multi-environment sessions.\n");
 
     Ok(())
 }

@@ -1,11 +1,14 @@
 use super::*;
 use codex_apply_patch::MaybeApplyPatchVerified;
 use codex_exec_server::LOCAL_FS;
+use codex_login::CodexAuth;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSandboxPolicyContext;
+use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::FileChange;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::PathBufExt;
@@ -27,8 +30,11 @@ fn local_context(cwd: &PathUri) -> FileSystemSandboxPolicyContext<'_> {
     }
 }
 
+use crate::config::Constrained;
+use crate::config::Permissions;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
+use crate::session::tests::make_session_and_context_with_auth_and_config_and_rx;
 use crate::tools::context::ToolInvocation;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::PostToolUsePayload;
@@ -42,20 +48,36 @@ fn sample_patch() -> &'static str {
 *** End Patch"#
 }
 
-async fn invocation_for_payload(payload: ToolPayload) -> ToolInvocation {
+async fn invocation_from_session(
+    payload: ToolPayload,
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+) -> (ToolInvocation, PathUri) {
+    let step_context = StepContext::for_test(Arc::clone(&turn));
+    let cwd = resolve_tool_environment(&step_context.environments, /*environment_id*/ None)
+        .expect("primary turn environment must resolve")
+        .expect("primary turn environment must exist")
+        .cwd()
+        .clone();
+    (
+        ToolInvocation {
+            session,
+            step_context,
+            turn,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
+            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+            call_id: "call-apply-patch".to_string(),
+            tool_name: codex_tools::ToolName::plain("apply_patch"),
+            source: crate::tools::context::ToolCallSource::Direct,
+            payload,
+        },
+        cwd,
+    )
+}
+
+async fn invocation_for_payload(payload: ToolPayload) -> (ToolInvocation, PathUri) {
     let (session, turn) = make_session_and_context().await;
-    let turn = Arc::new(turn);
-    ToolInvocation {
-        session: session.into(),
-        step_context: StepContext::for_test(Arc::clone(&turn)),
-        turn,
-        cancellation_token: tokio_util::sync::CancellationToken::new(),
-        tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-        call_id: "call-apply-patch".to_string(),
-        tool_name: codex_tools::ToolName::plain("apply_patch"),
-        source: crate::tools::context::ToolCallSource::Direct,
-        payload,
-    }
+    invocation_from_session(payload, Arc::new(session), Arc::new(turn)).await
 }
 
 #[tokio::test]
@@ -82,7 +104,7 @@ async fn pre_tool_use_payload_uses_freeform_patch_input() {
     let payload = ToolPayload::Custom {
         input: patch.to_string(),
     };
-    let invocation = invocation_for_payload(payload).await;
+    let (invocation, _) = invocation_for_payload(payload).await;
     let handler = ApplyPatchHandler::default();
 
     assert_eq!(
@@ -100,7 +122,7 @@ async fn post_tool_use_payload_uses_patch_input_and_tool_output() {
     let payload = ToolPayload::Custom {
         input: patch.to_string(),
     };
-    let invocation = invocation_for_payload(payload).await;
+    let (invocation, _) = invocation_for_payload(payload).await;
     let output = ApplyPatchToolOutput::from_text("Success. Updated files.".to_string());
     let handler = ApplyPatchHandler::default();
 
@@ -403,4 +425,131 @@ fn write_permissions_for_windows_paths_uses_executor_uris() {
             FileSystemAccessMode::Write,
         )]),
     );
+}
+
+#[test]
+fn with_environment_id_line_inserts_after_begin_patch_header() {
+    let patch = "*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch\n";
+    let out = with_environment_id_line(patch.to_string(), "env-1");
+    assert_eq!(
+        out,
+        "*** Begin Patch\n*** Environment ID: env-1\n*** Add File: hello.txt\n+hi\n*** End Patch\n"
+    );
+}
+
+#[test]
+fn with_environment_id_line_leaves_malformed_patch_unchanged() {
+    let patch = "not a patch\n";
+    assert_eq!(
+        with_environment_id_line(patch.to_string(), "env-1"),
+        "not a patch\n"
+    );
+}
+
+#[test]
+fn function_apply_patch_patch_text_extracts_patch_argument() {
+    let payload = ToolPayload::Function {
+        arguments: r#"{"patch":"*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n","environment_id":"env-1"}"#
+            .to_string(),
+    };
+    assert_eq!(
+        function_apply_patch_patch_text(&payload).as_deref(),
+        Some("*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n")
+    );
+}
+
+#[test]
+fn function_apply_patch_patch_text_rejects_non_function_payloads() {
+    let payload = ToolPayload::Custom {
+        input: "*** Begin Patch\n*** End Patch\n".to_string(),
+    };
+    assert_eq!(function_apply_patch_patch_text(&payload), None);
+}
+
+#[tokio::test]
+async fn function_apply_patch_rejects_missing_patch_argument_with_teachable_error() {
+    let payload = ToolPayload::Function {
+        arguments: r#"{}"#.to_string(),
+    };
+    let (invocation, _) = invocation_for_payload(payload).await;
+    let handler = FunctionApplyPatchHandler::default();
+
+    let err = match handler.handle(invocation).await {
+        Err(err) => err,
+        Ok(_) => panic!("a missing patch argument must be rejected"),
+    };
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "apply_patch is missing the required 'patch' argument; pass the full patch text starting with '*** Begin Patch' in 'patch'".to_string(),
+        )
+    );
+}
+
+#[tokio::test]
+async fn function_apply_patch_rejects_non_string_patch_argument_with_teachable_error() {
+    let payload = ToolPayload::Function {
+        arguments: json!({ "patch": { "raw": "not a string" } }).to_string(),
+    };
+    let (invocation, _) = invocation_for_payload(payload).await;
+    let handler = FunctionApplyPatchHandler::default();
+
+    let err = match handler.handle(invocation).await {
+        Err(err) => err,
+        Ok(_) => panic!("a non-string patch argument must be rejected"),
+    };
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "apply_patch 'patch' argument must be a string containing the full patch text starting with '*** Begin Patch'".to_string(),
+        )
+    );
+}
+
+#[tokio::test]
+async fn function_apply_patch_applies_f1_shaped_raw_add_file_patch() {
+    // F1 shape (spec §1.1): raw markdown Add-File — content lines carry
+    // no per-line `+` prefix and the first content line is an H1.
+    let patch = "*** Begin Patch\n\
+*** Add File: grok/plans/spec-freeze-r23-glm.md\n\
+# SPEC-FREEZE-1 ROUND 23 — REVIEW RUN 2 of 3 (apex-ayl.45)\n\
+Freeze holds until the round-23 review lands.\n\
+\n\
+| field | value |\n\
+| --- | --- |\n\
+*** End Patch\n";
+    let payload = ToolPayload::Function {
+        arguments: json!({ "patch": patch }).to_string(),
+    };
+    // The default test session is read-only with approval on request, so this
+    // write would stall on an unanswered approval prompt; build the session
+    // with the integration harness shape instead.
+    let (session, turn, _events) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.permissions = Permissions::from_approval_and_profile(
+                Constrained::allow_any(AskForApproval::Never),
+                Constrained::allow_only(PermissionProfile::Disabled),
+            )
+            .expect("test permissions should be valid");
+        },
+    )
+    .await;
+    let (invocation, cwd) = invocation_from_session(payload, session, turn).await;
+    let handler = FunctionApplyPatchHandler::default();
+
+    match handler.handle(invocation).await {
+        Ok(_) => {}
+        Err(err) => panic!("an F1-shaped raw Add-File patch must apply: {err:?}"),
+    }
+
+    let file_path = cwd.to_path_buf().join("grok/plans/spec-freeze-r23-glm.md");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).expect("the raw Add-File must create the file"),
+        "# SPEC-FREEZE-1 ROUND 23 — REVIEW RUN 2 of 3 (apex-ayl.45)\nFreeze holds until the round-23 review lands.\n\n| field | value |\n| --- | --- |\n"
+    );
+    let _ = std::fs::remove_file(&file_path);
+    let _ = std::fs::remove_dir(cwd.to_path_buf().join("grok/plans"));
+    let _ = std::fs::remove_dir(cwd.to_path_buf().join("grok"));
 }

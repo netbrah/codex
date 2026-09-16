@@ -24,6 +24,7 @@ use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch_spec::create_apply_patch_freeform_tool;
+use crate::tools::handlers::apply_patch_spec::create_apply_patch_function_tool;
 use crate::tools::handlers::file_system_sandbox_policy_context_for_cwd;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::updated_hook_command;
@@ -377,72 +378,276 @@ impl ApplyPatchHandler {
                 "apply_patch handler received unsupported payload".to_string(),
             ));
         };
-        let args = match codex_apply_patch::parse_patch(&patch_input) {
-            Ok(args) => args,
-            Err(parse_error) => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "apply_patch verification failed: {parse_error}"
-                )));
-            }
-        };
-        let selected_environment_id =
-            require_environment_id(args.environment_id.as_deref(), self.multi_environment)?;
-
-        // Verify the parsed patch against the selected environment filesystem.
-        let Some(turn_environment) = resolve_tool_environment(
-            &step_context.environments,
-            selected_environment_id.as_deref(),
-        )?
-        else {
-            return Err(FunctionCallError::RespondToModel(
-                "apply_patch is unavailable in this session".to_string(),
-            ));
-        };
-        let fs = turn_environment.environment.get_filesystem();
-        let sandbox = turn_environment.sandbox_context(/*additional_permissions*/ None);
-        match codex_apply_patch::verify_apply_patch_args_with_mode(
-            args,
-            turn_environment.cwd(),
-            apply_patch_file_update_mode(&turn),
-            fs.as_ref(),
-            Some(&sandbox),
+        run_apply_patch_text(
+            self.multi_environment,
+            &session,
+            &turn,
+            &step_context,
+            &cancellation_token,
+            &tracker,
+            &call_id,
+            tool_name,
+            &patch_input,
         )
         .await
-        {
-            codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
-                let tool_ctx = ToolCtx {
-                    session,
-                    step_context: Arc::clone(&step_context),
-                    cancellation_token,
-                    call_id,
-                    tool_name,
-                };
-                let content = execute_verified_patch(
-                    changes,
-                    turn_environment.clone(),
-                    Some(&tracker),
-                    tool_ctx,
-                )
-                .await?;
-                Ok(boxed_tool_output(ApplyPatchToolOutput::from_text(content)))
-            }
-            codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
-                Err(FunctionCallError::RespondToModel(format!(
-                    "apply_patch verification failed: {parse_error}"
-                )))
-            }
-            codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
-                tracing::trace!("Failed to parse apply_patch input, {error:?}");
-                Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received invalid patch input".to_string(),
-                ))
-            }
-            codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => {
-                Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received non-apply_patch input".to_string(),
-                ))
-            }
+    }
+}
+
+/// Executes verified patch text shared by the custom (freeform) and
+/// function-tool apply_patch handlers so both paths run identical
+/// parse/verify/execute logic.
+#[allow(clippy::too_many_arguments)]
+async fn run_apply_patch_text(
+    multi_environment: bool,
+    session: &Arc<Session>,
+    turn: &Arc<TurnContext>,
+    step_context: &Arc<StepContext>,
+    cancellation_token: &CancellationToken,
+    tracker: &SharedTurnDiffTracker,
+    call_id: &str,
+    tool_name: ToolName,
+    patch_input: &str,
+) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
+    let args = match codex_apply_patch::parse_patch(patch_input) {
+        Ok(args) => args,
+        Err(parse_error) => {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "apply_patch verification failed: {parse_error}"
+            )));
         }
+    };
+    let selected_environment_id =
+        require_environment_id(args.environment_id.as_deref(), multi_environment)?;
+
+    // Verify the parsed patch against the selected environment filesystem.
+    let Some(turn_environment) = resolve_tool_environment(
+        &step_context.environments,
+        selected_environment_id.as_deref(),
+    )?
+    else {
+        return Err(FunctionCallError::RespondToModel(
+            "apply_patch is unavailable in this session".to_string(),
+        ));
+    };
+    let fs = turn_environment.environment.get_filesystem();
+    let sandbox = turn_environment.sandbox_context(/*additional_permissions*/ None);
+    match codex_apply_patch::verify_apply_patch_args_with_mode(
+        args,
+        turn_environment.cwd(),
+        apply_patch_file_update_mode(turn),
+        fs.as_ref(),
+        Some(&sandbox),
+    )
+    .await
+    {
+        codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
+            let tool_ctx = ToolCtx {
+                session: Arc::clone(session),
+                step_context: Arc::clone(step_context),
+                cancellation_token: cancellation_token.clone(),
+                call_id: call_id.to_string(),
+                tool_name,
+            };
+            let content =
+                execute_verified_patch(changes, turn_environment.clone(), Some(tracker), tool_ctx)
+                    .await?;
+            Ok(boxed_tool_output(ApplyPatchToolOutput::from_text(content)))
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
+            Err(FunctionCallError::RespondToModel(format!(
+                "apply_patch verification failed: {parse_error}"
+            )))
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
+            tracing::trace!("Failed to parse apply_patch input, {error:?}");
+            Err(FunctionCallError::RespondToModel(
+                "apply_patch handler received invalid patch input".to_string(),
+            ))
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => {
+            Err(FunctionCallError::RespondToModel(
+                "apply_patch handler received non-apply_patch input".to_string(),
+            ))
+        }
+    }
+}
+
+/// Function-tool form of `apply_patch` for deployments whose responses
+/// implementation does not support grammar-constrained custom tools (see
+/// docs/responses-compat-seam.md). Parses the JSON arguments and executes
+/// the same shared patch path as [`ApplyPatchHandler`].
+#[derive(Default)]
+pub struct FunctionApplyPatchHandler {
+    multi_environment: bool,
+}
+
+impl FunctionApplyPatchHandler {
+    pub(crate) fn new(multi_environment: bool) -> Self {
+        Self { multi_environment }
+    }
+}
+
+impl ToolExecutor<ToolInvocation> for FunctionApplyPatchHandler {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("apply_patch")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        create_apply_patch_function_tool(self.multi_environment)
+    }
+
+    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
+    where
+        ToolInvocation: 'a,
+    {
+        Box::pin(self.handle_call(invocation))
+    }
+}
+
+impl FunctionApplyPatchHandler {
+    async fn handle_call(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
+        let ToolInvocation {
+            session,
+            turn,
+            step_context,
+            cancellation_token,
+            tracker,
+            call_id,
+            tool_name,
+            payload,
+            ..
+        } = invocation;
+
+        let ToolPayload::Function { arguments } = payload else {
+            return Err(FunctionCallError::RespondToModel(
+                "apply_patch function handler received unsupported payload".to_string(),
+            ));
+        };
+        let value = serde_json::from_str::<serde_json::Value>(&arguments).map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "apply_patch arguments are not valid JSON: {err}"
+            ))
+        })?;
+        let patch_value = value.get("patch").ok_or_else(|| {
+            FunctionCallError::RespondToModel(
+                "apply_patch is missing the required 'patch' argument; pass the full patch text starting with '*** Begin Patch' in 'patch'".to_string(),
+            )
+        })?;
+        let patch_input = patch_value
+            .as_str()
+            .ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "apply_patch 'patch' argument must be a string containing the full patch text starting with '*** Begin Patch'".to_string(),
+                )
+            })?
+            .to_string();
+        let patch_input = match value
+            .get("environment_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty())
+        {
+            Some(environment_id) => with_environment_id_line(patch_input, environment_id),
+            None => patch_input,
+        };
+        run_apply_patch_text(
+            self.multi_environment,
+            &session,
+            &turn,
+            &step_context,
+            &cancellation_token,
+            &tracker,
+            &call_id,
+            tool_name,
+            &patch_input,
+        )
+        .await
+    }
+}
+
+/// Injects the freeform `*** Environment ID: ...` line after the
+/// `*** Begin Patch` header so a JSON-provided `environment_id` argument
+/// flows through the same patch parsing path as the custom-tool form.
+fn with_environment_id_line(patch_input: String, environment_id: &str) -> String {
+    const BEGIN: &str = "*** Begin Patch";
+    let mut out = String::with_capacity(patch_input.len() + environment_id.len() + 8);
+    let mut lines = patch_input.splitn(2, '\n');
+    let first = lines.next().unwrap_or_default();
+    if first.trim() == BEGIN {
+        out.push_str(first);
+        out.push('\n');
+        out.push_str("*** Environment ID: ");
+        out.push_str(environment_id);
+        out.push('\n');
+        if let Some(rest) = lines.next() {
+            out.push_str(rest);
+        }
+    } else {
+        out.push_str(&patch_input);
+    }
+    out
+}
+
+/// Extracts the patch text from a function-form apply_patch payload for hook
+/// reporting (same `{"command": ...}` shape as the custom path).
+fn function_apply_patch_patch_text(payload: &ToolPayload) -> Option<String> {
+    let ToolPayload::Function { arguments } = payload else {
+        return None;
+    };
+    serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()?
+        .get("patch")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+impl CoreToolRuntime for FunctionApplyPatchHandler {
+    fn matches_kind(&self, payload: &ToolPayload) -> bool {
+        matches!(payload, ToolPayload::Function { .. })
+    }
+
+    fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
+        None
+    }
+
+    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
+        function_apply_patch_patch_text(&invocation.payload).map(|patch| PreToolUsePayload {
+            tool_name: HookToolName::apply_patch(),
+            tool_input: serde_json::json!({ "command": patch }),
+        })
+    }
+
+    fn with_updated_hook_input(
+        &self,
+        mut invocation: ToolInvocation,
+        updated_input: serde_json::Value,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        let patch = updated_hook_command(&updated_input)?;
+        invocation.payload = match invocation.payload {
+            ToolPayload::Function { .. } => ToolPayload::Function {
+                arguments: serde_json::json!({ "patch": patch }).to_string(),
+            },
+            payload => payload,
+        };
+        Ok(invocation)
+    }
+
+    fn post_tool_use_payload(
+        &self,
+        invocation: &ToolInvocation,
+        result: &dyn crate::tools::context::ToolOutput,
+    ) -> Option<PostToolUsePayload> {
+        let patch = function_apply_patch_patch_text(&invocation.payload)?;
+        let tool_response =
+            result.post_tool_use_response(&invocation.call_id, &invocation.payload)?;
+        Some(PostToolUsePayload {
+            tool_name: HookToolName::apply_patch(),
+            tool_use_id: invocation.call_id.clone(),
+            tool_input: serde_json::json!({ "command": patch }),
+            tool_response,
+        })
     }
 }
 
