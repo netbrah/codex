@@ -506,7 +506,7 @@ happen inside workflow subagents):
 | item | red evidence | green evidence | review rounds (0B+0M at) | commit |
 |---|---|---|---|---|
 | 1 | impl-item1-tdd-evidence.md §Sub-case 1 (RED, try 2) | evidence §Gates 115/115 + §Sub-cases 3–12 (GREEN) | r1 seats A/B 0B+0M (A: 1n; B: 3n) | `e21f608ac4` |
-| 2 | impl-item2-tdd-evidence.md §T2.1 (RED, deterministic) | evidence §Gates: 0 deterministic failures (98 pass; 14 TMT = pre-existing baseline, m-1 corrected) | r1 seats A/B 0B+0M (A: 1m/4n; B: 3m/3n; m/n fixed in evidence pre-commit) | <fill post-commit> |
+| 2 | impl-item2-tdd-evidence.md §T2.1 (RED, deterministic) | evidence §Gates: 0 deterministic failures (98 pass; 14 TMT = pre-existing baseline, m-1 corrected) | r1 seats A/B 0B+0M (A: 1m/4n; B: 3m/3n; m/n fixed in evidence pre-commit) | `a4d5af1f62` |
 | 3 | — | — | — | — |
 | 4 | — | — | — | — |
 | 5 | — | — | — | — |
