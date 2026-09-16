@@ -1,6 +1,7 @@
 use super::*;
 use crate::ModelsManagerConfig;
 use codex_protocol::config_types::Personality;
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ApprovalMessages;
 use codex_protocol::openai_models::AutoReviewMessages;
 use codex_protocol::openai_models::CollaborationModeMessages;
@@ -258,4 +259,16 @@ fn model_context_window_uses_model_value_without_override() {
     let updated = with_config_overrides(model.clone(), &config);
 
     assert_eq!(updated, model);
+}
+
+#[test]
+fn fallback_model_info_enables_apply_patch_for_unknown_models() {
+    let model = model_info_from_slug("some-unknown-model");
+
+    assert_eq!(
+        model.apply_patch_tool_type,
+        Some(ApplyPatchToolType::Freeform),
+        "fallback metadata should enable freeform apply_patch for all unknown models, \
+         so that non-catalogued models (e.g. glm-5.2, grok-4.6) retain patch capability"
+    );
 }

@@ -1623,3 +1623,53 @@ fn bundled_models_json_roundtrips() {
         "bundled models.json should contain at least one model"
     );
 }
+
+#[test]
+fn bundled_models_json_includes_third_party_models() {
+    let response = crate::bundled_models_response()
+        .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));
+
+    let slugs: Vec<&str> = response.models.iter().map(|m| m.slug.as_str()).collect();
+    assert!(
+        slugs.contains(&"glm-5.2"),
+        "bundled models.json should include glm-5.2; got: {slugs:?}"
+    );
+    assert!(
+        slugs.contains(&"grok-4.6"),
+        "bundled models.json should include grok-4.6; got: {slugs:?}"
+    );
+
+    // Both must advertise freeform apply_patch so the tool is registered.
+    for slug in ["glm-5.2", "grok-4.6"] {
+        let model = response
+            .models
+            .iter()
+            .find(|m| m.slug == slug)
+            .unwrap_or_else(|| panic!("{slug} should be in bundled models.json"));
+        assert_eq!(
+            model.apply_patch_tool_type,
+            Some(codex_protocol::openai_models::ApplyPatchToolType::Freeform),
+            "{slug} should advertise freeform apply_patch"
+        );
+    }
+}
+
+#[test]
+fn third_party_models_have_full_instruction_template() {
+    let response = crate::bundled_models_response()
+        .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));
+
+    for slug in ["glm-5.2", "grok-4.6"] {
+        let model = response
+            .models
+            .iter()
+            .find(|m| m.slug == slug)
+            .unwrap_or_else(|| panic!("{slug} should be in bundled models.json"));
+        let instructions = model.get_model_instructions(/*personality*/ None);
+        assert!(
+            instructions.len() > 5000,
+            "{slug} instructions_template should be a full system prompt (>5KB), got {} chars",
+            instructions.len()
+        );
+    }
+}

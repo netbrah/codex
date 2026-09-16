@@ -60,6 +60,7 @@ pub struct ProviderCapabilities {
     pub namespace_tools: bool,
     pub flatten_namespace_tools: bool,
     pub normalize_content_types: bool,
+    pub apply_patch_function_tool: bool,
     pub image_generation: bool,
     pub web_search: bool,
     pub external_web_access: bool,
@@ -72,6 +73,7 @@ impl Default for ProviderCapabilities {
             namespace_tools: true,
             flatten_namespace_tools: false,
             normalize_content_types: false,
+            apply_patch_function_tool: false,
             image_generation: true,
             web_search: true,
             external_web_access: true,
@@ -367,6 +369,7 @@ impl ModelProvider for ConfiguredModelProvider {
             normalize_content_types: !self.info.is_openai(),
             remote_compaction,
             flatten_namespace_tools: !self.info.is_openai(),
+            apply_patch_function_tool: !self.info.is_openai(),
             ..ProviderCapabilities::default()
         }
     }
@@ -697,6 +700,35 @@ mod tests {
         for (provider_info, expected) in cases {
             let provider = create_model_provider(provider_info, /*auth_manager*/ None);
             assert_eq!(provider.capabilities().remote_compaction, expected);
+        }
+    }
+
+    #[test]
+    fn configured_provider_apply_patch_function_tool_matches_provider_support() {
+        let cases = [
+            (
+                ModelProviderInfo::create_openai_provider(/*base_url*/ None),
+                false,
+            ),
+            (
+                ModelProviderInfo {
+                    name: "Azure".to_string(),
+                    base_url: Some("https://example.com/openai".to_string()),
+                    ..ModelProviderInfo::default()
+                },
+                true,
+            ),
+            (provider_for("https://example.test/v1".to_string()), true),
+        ];
+
+        for (provider_info, expected) in cases {
+            let name = provider_info.name.clone();
+            let provider = create_model_provider(provider_info, /*auth_manager*/ None);
+            assert_eq!(
+                provider.capabilities().apply_patch_function_tool,
+                expected,
+                "provider: {name}"
+            );
         }
     }
 

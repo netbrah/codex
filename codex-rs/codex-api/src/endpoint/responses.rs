@@ -2,6 +2,7 @@ use crate::auth::SharedAuthProvider;
 use crate::common::ResponseStream;
 use crate::common::ResponsesApiRequest;
 use crate::endpoint::content_type_compat::normalize_content_types as normalize_content_type_strings;
+use crate::endpoint::content_type_compat::translate_agent_messages as translate_agent_message_items;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
@@ -120,6 +121,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
                 ApiError::Stream(format!("failed to encode responses request: {e}"))
             })?;
             normalize_content_type_strings(&mut value);
+            translate_agent_message_items(&mut value);
             EncodedJsonBody::encode(&value)
                 .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?
         } else {
