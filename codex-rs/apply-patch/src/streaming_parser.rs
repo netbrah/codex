@@ -1,3 +1,11 @@
+//! Streaming parser for `*** Begin Patch` ... `*** End Patch` patches.
+//!
+//! Lenient add-file content (P2): in the `AddFile` arm, a non-structural line
+//! that is not `+`-prefixed is appended verbatim as file content (including
+//! empty and whitespace-only lines, and lines that merely start with `*** `
+//! but match no known marker). `+`-prefixed lines keep the canonical
+//! prefix-stripped semantics. Canonical patches parse byte-identically to
+//! before. See `docs/responses-compat-apply-patch-format.md` §3.2.
 use std::path::PathBuf;
 
 use crate::parser::ADD_FILE_MARKER;
@@ -206,12 +214,11 @@ impl StreamingPatchParser {
                     contents.push('\n');
                     return Ok(());
                 }
-                Err(InvalidHunkError {
-                    message: format!(
-                        "'{trimmed}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
-                    ),
-                    line_number: self.line_number,
-                })
+                if let Some(AddFile { contents, .. }) = self.state.hunks.last_mut() {
+                    contents.push_str(line);
+                    contents.push('\n');
+                }
+                Ok(())
             }
             StreamingParserMode::DeleteFile => {
                 if self.handle_hunk_headers_and_end_patch(trimmed)? {
@@ -378,6 +385,10 @@ impl StreamingPatchParser {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "streaming_parser_p2_tests.rs"]
+mod streaming_parser_p2_tests;
 
 #[cfg(test)]
 mod tests {
@@ -834,11 +845,10 @@ mod tests {
         let mut parser = StreamingPatchParser::default();
         assert_eq!(
             parser.push_delta("*** Begin Patch\n*** Add File: file.txt\nbad\n"),
-            Err(InvalidHunkError {
-                message: "'bad' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'"
-                    .to_string(),
-                line_number: 3,
-            })
+            Ok(vec![AddFile {
+                path: PathBuf::from("file.txt"),
+                contents: "bad\n".to_string(),
+            }])
         );
 
         let mut parser = StreamingPatchParser::default();

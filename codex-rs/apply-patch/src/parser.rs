@@ -23,6 +23,7 @@
 //!
 //! The parser below is a little more lenient than the explicit spec and allows for
 //! leading/trailing whitespace around patch markers.
+//! The streaming parser's `AddFile` arm additionally accepts non-`+`-prefixed content lines verbatim (lenient add-file content); the grammar listing above remains the canonical form.
 use crate::ApplyPatchArgs;
 use crate::streaming_parser::StreamingPatchParser;
 #[cfg(test)]
