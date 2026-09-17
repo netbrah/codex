@@ -4,11 +4,11 @@ Bead: `apex-ayl.52` (apex_tracking ledger) · Branch: `feat/normalize-content-ty
 SoT spec: `docs/responses-compat-apply-patch-format.md` (**v5** — spec review
 loop terminated at round 5 with 0 Blocking + 0 Major; five source-verified
 minor/nit fixes applied as v5 and recorded in the spec §7 Round-5 map).
-Companion SoT: `docs/responses-compat-seam.md` · v1 archive: `docs/reviews/apply-patch-task-breakdown-v1-draft.md` · v2 archive: `docs/reviews/apply-patch-task-breakdown-v2-draft.md`.
+Companion SoT: `docs/responses-compat-seam.md` · v1 archive: `docs/reviews/apply-patch-task-breakdown-v1-draft.md`.
 
-Status: TASK BREAKDOWN — v3 (stage-4 review loop terminated: round 2
-returned 0 Blocking + 0 Major on v2; v3 records round 2 and applies the
-seven source-verified terminal-round minor/nit fixes — maps in §9). Stage 5 (workflow-driven implementation) may begin.
+Status: TASK BREAKDOWN — v2 (post round-1 review; resolution map in §9).
+No implementation until this breakdown passes a fresh 2-seat cross-review
+(stage 4) with zero Blocking and zero Major.
 
 ## 0. Conventions and mapping
 
@@ -36,16 +36,6 @@ seven source-verified terminal-round minor/nit fixes — maps in §9). Stage 5 (
   wrong or off in round 1 was corrected in this v2 revision (§9, rows 2,
   3, 9, 10, 11). They may drift as earlier items land; each item's first
   step is to re-verify its own references before editing.
-- **Execution baseline (R2 N-M1):** the function-tool seam cited by
-  Items 2-4 (`FunctionApplyPatchHandler`, `create_apply_patch_function_tool`,
-  the spec equality test, the capability gate `spec_plan.rs`:1257-1271 /
-  `provider.rs`:372) is part of this branch's **uncommitted working-tree
-  diff** (present since 2026-09-13; at committed HEAD `197ea1642c` those
-  symbols are absent — verified via `git show HEAD:` at R2). "At HEAD"
-  in this breakdown means the working-tree state of this branch tip — the
-  state both R1 and R2 seats verified — not `git show HEAD:`. §4 step 1
-  pre-checks the seam's presence; if the seam diff gets committed before
-  stage 5, re-derive the affected refs at the new HEAD first.
 
 ## 1. Red-state ledger (the 13 assertions; all verified at HEAD)
 
@@ -84,7 +74,7 @@ Display (`parser.rs`:57); P3.4 edits the parser-level strings at
 | 2 | T2 (T2.1-4) | P1: full format taught in the function-tool `patch` argument description (non-OpenAI path) + drift guard + self-consistency + expected-literal update | `codex-rs/core/src/tools/handlers/apply_patch_spec.rs`, `apply_patch_spec_tests.rs` | 0/13 (new T2.1 test is red first) |
 | 3 | T3 + T1.4, T1.5, T1.12, T1.14 (P3.1-P3.4) | Teachable parse-error messages: StartedPatch append, DeleteFile replacement, handler absent/non-string `patch`, boundary pre-pass | `streaming_parser.rs` (:193, :222), `parser.rs` (:268/:271), `codex-rs/core/src/tools/handlers/apply_patch.rs` (:534-541), `apply_patch_tests.rs`, `codex-rs/apply-patch/tests/suite/tool.rs` (:393), parser tests | 12/13 |
 | 4 | T4 (T4.1, T4.2, T4.2b) | Integration: provider-rename test asserting the function tool + §3.1 substrings on the wire; F1-shaped raw Add-File end-to-end (new file + overwrite) | `codex-rs/core/tests/common/responses.rs` (new `ev_apply_patch_function_call`), `codex-rs/core/tests/suite/apply_patch_cli.rs` (new `mount_apply_patch_function_call` + 3 tests) | 0/13 (regression locks) |
-| 5 | T5 + spec §6 | Seam-doc updates, spec final pass, full gates | `docs/responses-compat-seam.md`, spec (status line + §1.2 Conclusion line) | — |
+| 5 | T5 + spec §6 | Seam-doc updates, spec final pass, full gates | `docs/responses-compat-seam.md`, spec status line | — |
 | 6 | spec §5 (post-commit, operational) | Real-environment verification (release build, wiretap, exact F1 replay, raw-format probe, qwen regression), watch metrics, bead close | deployment artifacts only; no product code | — |
 
 ## 3. Item details
@@ -220,7 +210,7 @@ rounds 4/5):
 - **P3.4** boundary pre-pass, `parser.rs`:256-274, messages at :268 (Begin)
   and :271 (End) — parser-level strings (the `invalid patch: ` harness
   prefix comes from `parser.rs`:57's Display and is untouched). Pre-pass
-  surface only: `parse_patch_text` (`parser.rs`:193; boundary pre-pass :195-198), the function
+  surface only: `parse_patch_text` (`parser.rs`:193-199), the function
   path, the CLI (`lib.rs`:370), and the shell-intercept calls
   (`invocation.rs`:116/:123/:170/:175). The diff consumer's parallel
   streaming boundary messages (`streaming_parser.rs`:168/:184/:374) are
@@ -408,11 +398,7 @@ For each item, in order (the coordinator orchestrates; all code edits
 happen inside workflow subagents):
 
 1. **Pre-check:** re-verify the item's line refs at HEAD; confirm the tree
-   is green (`just test -p <crate>` scoped) before starting. For Items
-   2-4 additionally confirm the function-tool seam is present in the
-   working tree (§0 execution baseline — `FunctionApplyPatchHandler` in
-   `apply_patch.rs`); if the seam diff was committed since v2, re-derive
-   the item's refs at the new HEAD first.
+   is green (`just test -p <crate>` scoped) before starting.
 2. **TDD loop per sub-case:** write the failing test (or rewrite the
    ledger assertion) → run → confirm **RED** (with the exact captured
    failure) → implement the minimal change → run → confirm **GREEN** →
@@ -470,7 +456,7 @@ happen inside workflow subagents):
 - No existence check is added on any path: Add-File to an existing file
   overwrites as today (pinned by fixture scenario 011 and the core-suite
   test `apply_patch_cli_add_overwrites_existing_file`; the AddFile apply
-  branch `lib.rs`:508-535 writes unconditionally); Update-File keeps its
+  branch `lib.rs`:508-534 writes unconditionally); Update-File keeps its
   existing requirement of an existing file (fixture scenario 009);
   Delete-File keeps its existing behavior of deleting an existing file and
   failing when the file is missing (fixture scenario 007; the DeleteFile
@@ -505,11 +491,11 @@ happen inside workflow subagents):
 
 | item | red evidence | green evidence | review rounds (0B+0M at) | commit |
 |---|---|---|---|---|
-| 1 | impl-item1-tdd-evidence.md §Sub-case 1 (RED, try 2) | evidence §Gates 115/115 + §Sub-cases 3–12 (GREEN) | r1 seats A/B 0B+0M (A: 1n; B: 3n) | `e21f608ac4` |
-| 2 | impl-item2-tdd-evidence.md §T2.1 (RED, deterministic) | evidence §Gates: 0 deterministic failures (98 pass; 14 TMT = pre-existing baseline, m-1 corrected) | r1 seats A/B 0B+0M (A: 1m/4n; B: 3m/3n; m/n fixed in evidence pre-commit) | `a4d5af1f62` |
-| 3 | impl-item3-tdd-evidence.md §Steps 2–6 (12→10→9→9→0 red window) | evidence §Gates: apply-patch 115/115; core 0 deterministic failures (lib.rs:388 load class); T3.1/T3.2 green | r1 seats A/B 0B/1M (shared, 1-line comment fix) → r2 seats C/D 0B+0M (2m/3n doc-only, fixed pre-commit) | `939a6dc6f4` |
-| 4 | n/a (green-at-write regression locks by design — no red phase, breakdown step 1) | evidence §Gates: completed full run 118 tests, 0 deterministic failures (lib.rs:388 load class); 3 new tests green solo + in-run | r1 seats A/B 0B+0M (A: 2m/2n/1info; B: 2m/3n — all doc-level, fixed in evidence pre-commit) | `a90b15d600` |
-| 5 | n/a (docs-only item — no red phase by design, breakdown §Item 5 scope) | impl-item5-tdd-evidence.md §Worker attestation: 5/5 gates green (apply-patch 115/115; core 40 lib tests PASS first-try, binding grep empty; capability-gate green with 2 pre-existing env TLS failures D2; fix + fmt green) | r1 seats A/B: A 0B/2M + B 0B/0M → fixes applied → r2 seats C/D: C 0B/1M + D 0B/0M → fixes applied → r3 seats E/F: 0B+0M + 0B+0M (clean round, loop exit) | `<<ITEM5-SHA>>` |
+| 1 | — | — | — | — |
+| 2 | — | — | — | — |
+| 3 | — | — | — | — |
+| 4 | — | — | — | — |
+| 5 | — | — | — | — |
 | 6 | — | — | — (operator-gated) | — |
 
 ## 9. Review log (stage 4)
@@ -538,12 +524,12 @@ the K-M4 red-set progression re-derived from the ledger ownership in §1).
 |---|---|---|---|
 | 1 | T2.3 prescribes an insta snapshot flow for a non-insta test (L-M1 ≡ K-M3) | B / m | Item 2 T2.3 rewritten: the test is an inline `assert_eq!` equality check (`apply_patch_spec_tests.rs`:40-61; no insta snapshot exists); update the two expected literals (tool description `:45`, `patch` argument description `:52`) to the spec §3.1 exact text; no `cargo insta` step. Overview row 2 and DoD rewritten from "snapshot" to "expected literal(s)" |
 | 2 | Ledger #4 cites nonexistent `codex-rs/core/tests/suite/tool.rs` (L-M2 ≡ K-M1) | M / m | Corrected to `codex-rs/apply-patch/tests/suite/tool.rs`:386 (assert :393) in ledger row 4 and in the Item 3 overview files cell; `core/tests/suite/` has no `tool.rs` (re-listed at v2) |
-| 3 | "24 scenario fixtures" is 25 at HEAD (L-M3 ≡ K-M2) | m / m | Both occurrences now say 25 (25 fixture dirs — numbered 001-024 with two `020_*` dirs, `README.md` alongside in the scenarios dir; the scenario runner iterates `read_dir` dynamically, so the count cannot break the suite) |
+| 3 | "24 scenario fixtures" is 25 at HEAD (L-M3 ≡ K-M2) | m / m | Both occurrences now say 25 (fixture dirs 001-024 include two `020_*` dirs plus `README.md`; the scenario runner iterates `read_dir` dynamically, so the count cannot break the suite) |
 | 4 | Item 1 step 6's `mod tests;` sibling declaration collides with the file's inline `mod tests` (L-M4) | m | Module name fixed to `streaming_parser_p2_tests` with the reason stated (inline `#[cfg(test)] mod tests {` at `streaming_parser.rs`:382-383); §6 open question 1 (which asked to confirm the name) removed as resolved |
 | 5 | Item 4 step 2 helper body does not type-check as written (L-M5) | m | Body rewritten as the sibling local-bind pattern mirroring `ev_apply_patch_exec_command_call_via_heredoc` (`let args = serde_json::json!({ "patch": patch });` → `let arguments = serde_json::to_string(&args).expect(…);` → `ev_function_call(call_id, "apply_patch", &arguments)`); explicit E0308 note (`ev_function_call` takes `arguments: &str`; the one-line `.unwrap()` form passes an owned `String`) |
 | 6 | Item 3 step 6 "never leave the tree red at a gate-run boundary" unsatisfiable mid-red-window (K-M4) | m | Rewritten: until step 6 completes, the only permitted failures are the not-yet-landed ledger assertions — exactly 12 → 10 (after P3.1) → 9 (after P3.2) → 9 (after P3.3, which owns no ledger rows) → 0 (after P3.4), observed at test-run granularity as 4 failing test fns, nothing else; full-green gates before review/commit |
 | 7 | Item 3 step 5 reads implement-before-test for T3.1 (K-M5) | m | T3.1 made red-first in step 5 (both tests written and RED against the collapsed handler's shared old :539 message → P3.3 lands → GREEN); old step 7 (T3.1 description) deleted; steps renumbered 8→7 (T3.2), 9→8 (T1.14) |
-| 8 | §5 bullet "No existence check on any path (… Delete-File never reads)" false at the source (K-M6) | m | Rewritten to the spec §3.4 shape: no existence check is ADDED on any path; Add-File overwrite as today (scenario 011, `apply_patch_cli_add_overwrites_existing_file`, AddFile branch `lib.rs`:508-535 writes unconditionally); Update requires an existing file (scenario 009); Delete deletes existing and fails missing (scenario 007; DeleteFile branch `lib.rs`:536-595 reads content, propagates removal errors) |
+| 8 | §5 bullet "No existence check on any path (… Delete-File never reads)" false at the source (K-M6) | m | Rewritten to the spec §3.4 shape: no existence check is ADDED on any path; Add-File overwrite as today (scenario 011, `apply_patch_cli_add_overwrites_existing_file`, AddFile branch `lib.rs`:508-534 writes unconditionally); Update requires an existing file (scenario 009); Delete deletes existing and fails missing (scenario 007; DeleteFile branch `lib.rs`:536-595 reads content, propagates removal errors) |
 | 9 | `apply_patch.rs`:508-560 ends before `handle_call` closes (L-N1) | n | Now `:508-563` (verified: closing brace at :563) |
 | 10 | `registry.rs`:548-556 off-by-one at start, short at end (L-N2) | n | Now `:549-565` (full kind-mismatch block: `if !tool.matches_kind(…)` at :549 through closing `}` at :565; message at :550 unchanged) |
 | 11 | `responses.rs`:39-58 ends on the `requests` signature line (L-N3 ≡ K-N2) | n / n | Now `:39-60` (struct :39-41, `single_request` :50-56, `requests` :58-60) |
@@ -552,34 +538,8 @@ the K-M4 red-set progression re-derived from the ledger ownership in §1).
 | 14 | L's own supporting-table cite `lib.rs:374-384` ends before the hunk-arm message (L-N4) | n | No breakdown fix — the breakdown's own citation (`lib.rs`:370) is correct at HEAD; the finding concerns the seat report's internal supporting table only |
 | 15 | Status line + review log (bookkeeping) | — | Status → "TASK BREAKDOWN — v2 (post round-1 review; resolution map in §9)"; this §9 appended |
 | 16 | §0 bullet claimed "round-4/5 seats' line-ref sweeps: 0 wrong" for the breakdown's own references — stale after R1 found 3 wrong cites (coordinator-added; not raised in R1) | n | Reworded to reference the R1 re-verification and the §9 corrections (rows 2, 3, 9, 10, 11); fixed pre-emptively at v2 to avoid a round-2 finding |
-| 17 | v1 archival (coordinator-added; bookkeeping) | — | v1 archived to `docs/reviews/apply-patch-task-breakdown-v1-draft.md`; header pointer added (mirrors the spec's per-version archive convention) |
+| 17 | v1 archival (bookkeeping) | — | v1 archived to `docs/reviews/apply-patch-task-breakdown-v1-draft.md`; header pointer added (mirrors the spec's per-version archive convention) |
 
-### Round 2 (against v2) — verdicts 2026-09-15 EDT
-
-| Seat | Report | Verdict | Counts |
-|---|---|---|---|
-| M (implementability & reference accuracy) | `docs/reviews/apply-patch-task-breakdown-r2-seatM.md` | APPROVED | 0 Blocking, 0 Major, 0 Minor, 4 Nit |
-| N (spec conformance & TDD protocol) | `docs/reviews/apply-patch-task-breakdown-r2-seatN.md` | APPROVED | 0 Blocking, 0 Major, 1 Minor, 2 Nit |
-
-Full round = **0 Blocking + 0 Major** → the stage-4 review loop
-**terminated on v2**. Per the campaign convention (spec round-5
-precedent: loop terminated on v4, v5 applied the recorded terminal-round
-minor/nit fixes), those fixes are applied here as v3, source-verified,
-mapped below.
-
-### v2 → v3 resolution map (terminal-round minor/nit fixes; applied 2026-09-15 EDT)
-
-| # | Finding (seat) | Severity | v3 resolution |
-|---|---|---|---|
-| 1 | N-M1 — the execution baseline (function-tool seam, Items 2-4 targets) is uncommitted working-tree state; "verified at HEAD" holds only in the working-state sense | m | New §0 "Execution baseline" bullet + §4 step 1 pre-check: the seam (present since 2026-09-13) is absent at committed HEAD `197ea1642c` (re-verified for v3: `git show HEAD:` has 0 `FunctionApplyPatchHandler` occurrences in `apply_patch.rs`); "at HEAD" = working-tree state of this branch tip; if the seam diff is committed before stage 5, refs are re-derived at the new HEAD first |
-| 2 | M-N1 — `parser.rs`:193-199 endpoint loose (fn ends :211; pre-pass is :195-198) | n | Item 3 P3.4 bullet now cites `parse_patch_text` (`parser.rs`:193; boundary pre-pass :195-198) (verified at HEAD) |
-| 3 | M-N2 — AddFile branch `lib.rs`:508-534 off-by-one (arm brace :535) | n | `:508-535` in both the §5 bullet and the v1→v2 map row 8 (verified: arm :508-535, `added.push` :534, brace :535) |
-| 4 | M-N3 — a `:560-586` "sub-detail" cited as one line short of :587 | n | **No edit needed:** the breakdown cites the full DeleteFile arm `:536-595` (verified correct at HEAD); the `:560-586` sub-range quoted by the finding does not appear anywhere in the breakdown; the removal-error path verified at source (`return Err(error)` :586, closing brace :587) |
-| 5 | M-N4 — row-3 "plus README.md" phrasing attaches a file to the dir set | n | Row 3 reworded: "25 fixture dirs — numbered 001-024 with two `020_*` dirs, `README.md` alongside" |
-| 6 | N-N1 — v1→v2 map row 17 did not self-identify as coordinator-added | n | Row 17 now "(coordinator-added; bookkeeping)" |
-| 7 | N-N2 — Item 5 overview "Files touched" cell stale after the row-13 §1.2 Conclusion edit | n | Cell now "spec (status line + §1.2 Conclusion line)" |
-
-Bookkeeping with this v3 revision: status line → v3 (header); v2
-archived to `docs/reviews/apply-patch-task-breakdown-v2-draft.md` (header
-pointer added). **Stage 5 (workflow-driven implementation) may begin per
-the breakdown's item order (1→6).**
+**Round 2** (fresh seats, against v2) must return **0 Blocking + 0 Major**
+on a full round before stage 5 (implementation) may begin; any B/M
+triggers a fix + fresh round 3 (loop per AGENTS.md stage 4).
