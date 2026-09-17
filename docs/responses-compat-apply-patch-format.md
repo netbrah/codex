@@ -7,7 +7,7 @@ Evidence: `~/.codex/sessions/2026/09/{13,14,15}` rollouts · v0 archive: `docs/r
 Status: IMPLEMENTED — all five items landed on branch
 `feat/normalize-content-types-vllm` (item 1 / P2 `e21f608ac4`, item 2 /
 P1 `a4d5af1f62`, item 3 / P3 `939a6dc6f4`, item 4 / T4 `a90b15d600`,
-item 5 / docs + gates `<<ITEM5-SHA>>` — coordinator fills after commit).
+item 5 / docs + gates `126728c4b9` — coordinator fills after commit).
 Spec review loop terminated at round 5 with 0 Blocking + 0 Major (on v4;
 v5 applies the five source-verified minor/nit fixes, maps in §7).
 Task-breakdown review loop terminated at round 2 with 0 Blocking + 0
