@@ -134,6 +134,7 @@ impl AgentsOverviewProjectGroup {
 pub(super) struct AgentsOverviewViewState {
     pub(super) input: String,
     pub(super) key_chord_hint: Option<Vec<(String, String)>>,
+    pub(super) creating_worktree: bool,
     pub(super) refresh_failed: bool,
     pub(super) connection_notice: Option<&'static str>,
     pub(super) server_version_notice: Option<String>,
@@ -160,6 +161,7 @@ pub(super) struct AgentsOverviewView {
     app_event_tx: AppEventSender,
     keymap: ListKeymap,
     agents_keymap: AgentsKeymap,
+    worktrees_enabled: bool,
 }
 
 impl AgentsOverviewView {
@@ -189,6 +191,7 @@ impl AgentsOverviewView {
             app_event_tx,
             keymap: keymap.list,
             agents_keymap: keymap.agents,
+            worktrees_enabled,
         };
         view.state().completion = None;
         let visible = view.visible_indices();
@@ -585,7 +588,7 @@ impl BottomPaneView for AgentsOverviewView {
             return;
         }
 
-        if self.state().connection_notice.is_some()
+        if (self.state().connection_notice.is_some() || self.state().creating_worktree)
             && self.keymap.action_for(key) != Some(ListAction::Cancel)
         {
             match self.keymap.action_for(key) {
@@ -613,6 +616,14 @@ impl BottomPaneView for AgentsOverviewView {
             self.app_event_tx.send(AppEvent::NewAgentsOverviewSession {
                 cwd: self.selected_row().map(|row| row.thread.cwd.clone()),
             });
+            return;
+        }
+        if self.agents_keymap.new_worktree.is_pressed(key) {
+            if self.worktrees_enabled {
+                self.app_event_tx.send(AppEvent::NewAgentsOverviewWorktree {
+                    cwd: self.selected_row().map(|row| row.thread.cwd.clone()),
+                });
+            }
             return;
         }
         if self.agents_keymap.rename.is_pressed(key) {
@@ -644,9 +655,19 @@ impl BottomPaneView for AgentsOverviewView {
         }
         if self.agents_keymap.hide.is_pressed(key) {
             if let Some(row) = self.selected_row() {
-                self.app_event_tx.send(AppEvent::HideAgentsOverviewThread {
-                    thread_id: row.thread_id,
-                });
+                let thread_id = row.thread_id;
+                let visible = self.visible_indices();
+                if !self.state().renaming
+                    && let Some(position) = visible.iter().position(|index| *index == self.selected)
+                    && let Some(next) = visible
+                        .get(position + 1)
+                        .or_else(|| visible.get(position.saturating_sub(1)))
+                {
+                    // Preserve a neighboring row when hiding rebuilds the view.
+                    self.selected = *next;
+                }
+                self.app_event_tx
+                    .send(AppEvent::HideAgentsOverviewThread { thread_id });
             }
             return;
         }
