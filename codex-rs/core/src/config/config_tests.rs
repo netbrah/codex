@@ -13113,3 +13113,30 @@ fn sqlite_home_env_conflict_reports_an_override() -> std::io::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn multi_agent_version_for_model_prefers_catalogue_v2_without_feature_override()
+-> std::io::Result<()> {
+    // No features enabled (Collab is default-on, so it must be explicitly disabled)
+    // and no CLI overrides: the catalogue value must win without --enable multi_agent_v2.
+    let codex_home = tempdir()?;
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str("[features]\nmulti_agent = false")
+            .expect("TOML deserialization should succeed"),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.multi_agent_version_for_model(Some(MultiAgentVersion::V2)),
+        MultiAgentVersion::V2,
+        "catalogue v2 must resolve without the multi_agent_v2 feature or a CLI override"
+    );
+    assert_eq!(
+        config.multi_agent_version_for_model(None),
+        MultiAgentVersion::Disabled,
+        "unknown models must keep the feature-derived fallback (Disabled with no features)"
+    );
+    Ok(())
+}

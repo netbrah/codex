@@ -17,8 +17,14 @@ use codex_login::ExternalAuthRefreshContext;
 use codex_login::TokenData;
 use codex_prompts::render_model_instructions;
 use codex_protocol::auth::AuthMode;
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ModelAccessPrograms;
+use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
+use codex_protocol::openai_models::TruncationPolicyConfig;
+use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::turn_input::CyberAccessProgram;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -1671,6 +1677,83 @@ fn third_party_models_have_full_instruction_template() {
             instructions.len() > 5000,
             "{slug} instructions_template should be a full system prompt (>5KB), got {} chars",
             instructions.len()
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_model_info_resolves_qwen3_8_27b_bundled_entry() {
+    let codex_home = tempdir().expect("temp dir");
+    let manager = openai_manager_for_tests(
+        codex_home.path().to_path_buf(),
+        TestModelsEndpoint::new(Vec::new()),
+    );
+    let config = ModelsManagerConfig::default();
+
+    let qwen = manager.get_model_info("qwen3.8-27b", &config).await;
+
+    assert!(!qwen.used_fallback_model_metadata);
+    assert_eq!(qwen.multi_agent_version, Some(MultiAgentVersion::V2));
+    assert_eq!(qwen.visibility, ModelVisibility::List);
+    assert_eq!(qwen.resolved_context_window(), Some(262_144));
+    assert_eq!(
+        qwen.apply_patch_tool_type,
+        Some(ApplyPatchToolType::Freeform)
+    );
+    assert_eq!(
+        qwen.truncation_policy,
+        TruncationPolicyConfig::bytes(/*limit*/ 10_000)
+    );
+
+    // The entry must be the glm-5.2 template with exactly the qwen divergences
+    // (slug/display_name/description, xhigh default + four supported levels,
+    // multi_agent_version v2, priority 52).
+    let mut expected = manager.get_model_info("glm-5.2", &config).await;
+    expected.slug = "qwen3.8-27b".to_string();
+    expected.display_name = "Qwen3.8-27B".to_string();
+    expected.description = Some(
+        "Qwen 3.8 27B \u{2014} on-prem agentic coding model (vLLM via LLM proxy).".to_string(),
+    );
+    expected.default_reasoning_level = Some(ReasoningEffort::XHigh);
+    expected.supported_reasoning_levels = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::Low,
+            description: "Balances speed with some reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::Medium,
+            description: "Solid balance of reasoning depth and latency".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::High,
+            description: "Maximizes reasoning depth for complex problems".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::XHigh,
+            description: "Extra high reasoning depth for complex problems".to_string(),
+        },
+    ];
+    expected.multi_agent_version = Some(MultiAgentVersion::V2);
+    expected.priority = 52;
+
+    assert_eq!(qwen, expected);
+}
+
+#[tokio::test]
+async fn get_model_info_reports_multi_agent_v2_for_onprem_models() {
+    let codex_home = tempdir().expect("temp dir");
+    let manager = openai_manager_for_tests(
+        codex_home.path().to_path_buf(),
+        TestModelsEndpoint::new(Vec::new()),
+    );
+    let config = ModelsManagerConfig::default();
+
+    for slug in ["glm-5.2", "grok-4.6"] {
+        let model_info = manager.get_model_info(slug, &config).await;
+        assert_eq!(
+            model_info.multi_agent_version,
+            Some(MultiAgentVersion::V2),
+            "{slug} should resolve multi_agent_version v2 from the bundled catalogue"
         );
     }
 }
