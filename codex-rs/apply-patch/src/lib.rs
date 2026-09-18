@@ -154,6 +154,11 @@ pub struct ApplyPatchArgs {
     pub hunks: Vec<Hunk>,
     pub workdir: Option<String>,
     pub environment_id: Option<String>,
+
+    /// Set when the parser repaired a malformed-but-intent-clear patch
+    /// (strict-first shape-repair pre-pass); surfaced to the model as one
+    /// leading line of the tool output.
+    pub repair_note: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]

@@ -45,13 +45,10 @@ pub(crate) const EOF_MARKER: &str = "*** End of File";
 pub(crate) const CHANGE_CONTEXT_MARKER: &str = "@@ ";
 pub(crate) const EMPTY_CHANGE_CONTEXT_MARKER: &str = "@@";
 
-/// Currently, the only OpenAI model that knowingly requires lenient parsing is
-/// gpt-4.1. While we could try to require everyone to pass in a strictness
-/// param when invoking apply_patch, it is a pain to thread it through all of
-/// the call sites, so we resign ourselves allowing lenient parsing for all
-/// models. See [`ParseMode::Lenient`] for details on the exceptions we make for
-/// gpt-4.1.
-const PARSE_IN_STRICT_MODE: bool = false;
+/// One bounded transparency line, surfaced to the model as a leading line of
+/// the tool output when the parser repaired a malformed-but-intent-clear
+/// patch via the strict-first shape-repair pre-pass (apex-xt2.11).
+const PATCH_REPAIR_NOTE: &str = "Note: the patch shape was repaired by the parser (missing or stray '*** Begin Patch'/'*** End Patch' boundary lines); the applied file content is exactly as provided.";
 
 #[derive(Debug, PartialEq, Error, Clone)]
 pub enum ParseError {
@@ -144,12 +141,32 @@ impl UpdateFileChunk {
 }
 
 pub fn parse_patch(patch: &str) -> Result<ApplyPatchArgs, ParseError> {
-    let mode = if PARSE_IN_STRICT_MODE {
-        ParseMode::Strict
-    } else {
-        ParseMode::Lenient
-    };
-    parse_patch_text(patch, mode)
+    match parse_patch_text(patch, ParseMode::Strict) {
+        Ok(args) => Ok(args),
+        Err(_strict_err) => {
+            // Existing heredoc leniency (gpt-4.1 era) — unchanged behavior,
+            // unchanged order. Its ERROR is the parity reference (R1-M1 [B]):
+            // it is whatever today's Lenient path produces — boundary-class
+            // or hunk-class for non-heredoc input, the INNER error for
+            // heredoc-wrapped input (check_patch_boundaries_lenient re-calls
+            // strict on the inner lines).
+            let lenient_err = match parse_patch_text(patch, ParseMode::Lenient) {
+                Ok(args) => return Ok(args),
+                Err(e) => e,
+            };
+            // Fork ratchet (apex-xt2.11): strict-first shape repair, retry
+            // ONCE. Gated on the lenient error; the fallback below returns
+            // IT, so every currently-rejected input yields byte-identical
+            // error text to today.
+            if let Some(normalized) = normalize_patch_shape(&lenient_err, patch)
+                && let Ok(mut args) = parse_patch_text(&normalized, ParseMode::Strict)
+            {
+                args.repair_note = Some(PATCH_REPAIR_NOTE.to_string());
+                return Ok(args);
+            }
+            Err(lenient_err)
+        }
+    }
 }
 
 enum ParseMode {
@@ -208,7 +225,67 @@ fn parse_patch_text(patch: &str, mode: ParseMode) -> Result<ApplyPatchArgs, Pars
         patch,
         workdir: None,
         environment_id,
+        repair_note: None,
     })
+}
+
+/// Strict-first shape-repair pre-pass (apex-xt2.11).
+///
+/// Given the lenient attempt's error and the raw patch text, deterministically
+/// normalizes the patch for the two observed model shape signatures — shape A
+/// (no `*** Begin Patch` anywhere, hunk header on line 1) and shape AB
+/// (leading stray hunk header, then `*** Begin Patch` at index > 0) — and
+/// returns the normalized text, or `None` when the input matches no
+/// signature and the original error must stand unchanged.
+fn normalize_patch_shape(err: &ParseError, patch: &str) -> Option<String> {
+    // Boundary-class failures only: a hunk-class error means the patch body
+    // already reached the state machine, and rewriting its lines would
+    // silently change file contents.
+    if !matches!(err, ParseError::InvalidPatchError(_)) {
+        return None;
+    }
+    let lines: Vec<&str> = patch.trim().split('\n').collect();
+    // Hunk-header-first signature (trimmed, like the boundary checks and the
+    // state machine's own `trim`).
+    let first_line = lines.first()?.trim();
+    let hunk_header_first = first_line.starts_with(ADD_FILE_MARKER)
+        || first_line.starts_with(DELETE_FILE_MARKER)
+        || first_line.starts_with(UPDATE_FILE_MARKER);
+    if !hunk_header_first {
+        return None;
+    }
+    // Begin-line predicate: trimmed equality with the marker const — a
+    // `+`-prefixed `+*** Begin Patch` content line is NOT a Begin line.
+    let begin_index = lines
+        .iter()
+        .position(|line| line.trim() == BEGIN_PATCH_MARKER);
+    match begin_index {
+        // Case A (shape A): no `*** Begin Patch` anywhere — wrap the header
+        // with a Begin line and, when absent, an End line.
+        None => Some(with_end_boundary(
+            std::iter::once(BEGIN_PATCH_MARKER).chain(lines.iter().copied()),
+        )),
+        // A Begin at index 0 is the canonical shape — the first strict
+        // attempt already covered it; not leading-strip material.
+        Some(0) => None,
+        // Case AB (shape AB): a stray hunk header precedes the first Begin —
+        // drop the leading stray lines, then the same End-append check.
+        Some(i) => Some(with_end_boundary(lines[i..].iter().copied())),
+    }
+}
+
+/// Joins the lines with `\n`, appending `*** End Patch` when the last line
+/// is not it. Inputs reach here already trimmed, so the last line is
+/// non-blank.
+fn with_end_boundary<'a>(lines: impl Iterator<Item = &'a str>) -> String {
+    let mut out: Vec<&str> = lines.collect();
+    if out
+        .last()
+        .is_none_or(|line| line.trim() != END_PATCH_MARKER)
+    {
+        out.push(END_PATCH_MARKER);
+    }
+    out.join("\n")
 }
 
 /// Checks the start and end lines of the patch text for `apply_patch`,
@@ -448,6 +525,7 @@ fn test_parse_patch_preserves_end_of_file_marker() {
             patch: patch.to_string(),
             workdir: None,
             environment_id: None,
+            repair_note: None,
         })
     );
 }
@@ -590,6 +668,7 @@ fn test_parse_patch_lenient() {
             patch: patch_text.to_string(),
             workdir: None,
             environment_id: None,
+            repair_note: None,
         })
     );
 
@@ -605,6 +684,7 @@ fn test_parse_patch_lenient() {
             patch: patch_text.to_string(),
             workdir: None,
             environment_id: None,
+            repair_note: None,
         })
     );
 
@@ -620,6 +700,7 @@ fn test_parse_patch_lenient() {
             patch: patch_text.to_string(),
             workdir: None,
             environment_id: None,
+            repair_note: None,
         })
     );
 
@@ -666,6 +747,7 @@ fn test_parse_patch_environment_id_preamble() {
             patch: "*** Begin Patch\n*** Environment ID: remote\n*** Add File: hello.txt\n+hello\n*** End Patch".to_string(),
             workdir: None,
             environment_id: Some("remote".to_string()),
+            repair_note: None,
         })
     );
 
@@ -683,3 +765,7 @@ fn test_parse_patch_environment_id_preamble() {
         ))
     );
 }
+
+#[cfg(test)]
+#[path = "parser_shape_retry_tests.rs"]
+mod parser_shape_retry_tests;
