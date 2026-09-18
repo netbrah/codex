@@ -4,9 +4,12 @@
 > upstream merges (openai/codex main → this branch). After every ratchet, verify
 > against this manifest and update "Last verified".
 >
-> **Last verified:** 2026-09-17 (UTC) — base `44b9011611`
-> (`reference/upstream-openai`) vs origin/main @ `f3da3861c5` (193 commits ahead),
-> branch `feat/normalize-content-types-vllm` @ `5789dd8500`.
+> **Last verified:** 2026-09-17 (UTC) — base `f3da3861c5`
+> (`reference/upstream-openai`) = origin/main HEAD, MERGED into branch
+> `feat/normalize-content-types-vllm` @ `7bcd344fa7` (+ fork-ops commits);
+> post-merge gate pack 3-run classified clean (2 upstream-side flaky tests
+> documented, reproduced on pure upstream f3da3861c5); both remotes in sync
+> (netbrah/codex + APEX/codex); SCS ff-synced.
 
 ## Ratchet audit 2026-09-17 (pre-merge, entity-level via weave)
 
