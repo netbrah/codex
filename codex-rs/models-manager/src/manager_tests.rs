@@ -15,6 +15,7 @@ use codex_login::CodexAuth;
 use codex_login::ExternalAuth;
 use codex_login::ExternalAuthRefreshContext;
 use codex_login::TokenData;
+use codex_prompts::render_model_instructions;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::openai_models::ModelAccessPrograms;
 use codex_protocol::openai_models::ModelsResponse;
@@ -1665,7 +1666,7 @@ fn third_party_models_have_full_instruction_template() {
             .iter()
             .find(|m| m.slug == slug)
             .unwrap_or_else(|| panic!("{slug} should be in bundled models.json"));
-        let instructions = model.get_model_instructions(/*personality*/ None);
+        let instructions = render_model_instructions(model);
         assert!(
             instructions.len() > 5000,
             "{slug} instructions_template should be a full system prompt (>5KB), got {} chars",
