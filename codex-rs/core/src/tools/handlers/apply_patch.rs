@@ -416,6 +416,7 @@ async fn run_apply_patch_text(
             )));
         }
     };
+    let repair_note = args.repair_note.clone();
     let selected_environment_id =
         require_environment_id(args.environment_id.as_deref(), multi_environment)?;
 
@@ -451,6 +452,10 @@ async fn run_apply_patch_text(
             let content =
                 execute_verified_patch(changes, turn_environment.clone(), Some(tracker), tool_ctx)
                     .await?;
+            let content = match repair_note {
+                Some(note) => format!("{note}\n{content}"),
+                None => content,
+            };
             Ok(boxed_tool_output(ApplyPatchToolOutput::from_text(content)))
         }
         codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {

@@ -157,6 +157,7 @@ fn create_apply_patch_function_tool_example_round_trips_through_parser() {
             ],
             workdir: None,
             environment_id: None,
+            repair_note: None,
         })
     );
 }

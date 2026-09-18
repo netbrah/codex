@@ -553,3 +553,52 @@ Freeze holds until the round-23 review lands.\n\
     let _ = std::fs::remove_dir(cwd.to_path_buf().join("grok/plans"));
     let _ = std::fs::remove_dir(cwd.to_path_buf().join("grok"));
 }
+
+// Pinned to spec §3.4 (apex-xt2.11): byte-identical to the private
+// PATCH_REPAIR_NOTE const in codex-apply-patch. The const stays private
+// (crate API surface rule); the core crate pins the model-visible string at
+// the handler seam instead.
+const PATCH_REPAIR_NOTE: &str = "Note: the patch shape was repaired by the parser (missing or stray '*** Begin Patch'/'*** End Patch' boundary lines); the applied file content is exactly as provided.";
+
+#[tokio::test]
+async fn function_apply_patch_shape_a_missing_begin_surfaces_repair_note() {
+    // Shape A (spec §2.1): first line is the hunk header — the
+    // `*** Begin Patch` boundary is missing — content lines carry the
+    // canonical `+` prefix, and there is no trailing `*** End Patch`.
+    let patch = "*** Add File: notes/t12.md\n+line one\n+line two\n";
+    let payload = ToolPayload::Function {
+        arguments: json!({ "patch": patch }).to_string(),
+    };
+    let (session, turn, _events) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.permissions = Permissions::from_approval_and_profile(
+                Constrained::allow_any(AskForApproval::Never),
+                Constrained::allow_only(PermissionProfile::Disabled),
+            )
+            .expect("test permissions should be valid");
+        },
+    )
+    .await;
+    let (invocation, cwd) = invocation_from_session(payload, session, turn).await;
+    let handler = FunctionApplyPatchHandler::default();
+
+    let output = match handler.handle(invocation).await {
+        Ok(output) => output,
+        Err(err) => panic!("a shape-A missing-Begin patch must apply: {err:?}"),
+    };
+    let text = output.log_output();
+    assert!(
+        text.starts_with(&format!("{PATCH_REPAIR_NOTE}\n")),
+        "tool output must start with the repair note: {text:?}"
+    );
+
+    let file_path = cwd.to_path_buf().join("notes/t12.md");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).expect("the repaired Add-File must create the file"),
+        "line one\nline two\n"
+    );
+    let _ = std::fs::remove_file(&file_path);
+    let _ = std::fs::remove_dir(cwd.to_path_buf().join("notes"));
+}
