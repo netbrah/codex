@@ -6,6 +6,8 @@
 //! `write_stdin`, can still form a terminal row from the canonical dispatch
 //! invocation/result payloads when those payloads carry the session join key.
 
+use std::str::FromStr;
+
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
@@ -414,10 +416,39 @@ fn parse_dispatch_terminal_request(value: JsonValue) -> Result<ParsedTerminalReq
         terminal_id: Some(terminal_id),
         request: TerminalRequest::WriteStdin {
             stdin: args.chars,
-            yield_time_ms: args.yield_time_ms,
-            max_output_tokens: args.max_output_tokens,
+            yield_time_ms: lenient_int(args.yield_time_ms.as_ref()),
+            max_output_tokens: lenient_int(args.max_output_tokens.as_ref()),
         },
     })
+}
+
+/// Tolerant integer coercion for the D5 mirror of `write_stdin` optional
+/// fields: JSON numbers in range and base-10 integer strings are accepted,
+/// anything else degrades to `None` so a malformed optional field never
+/// bails the whole reduction.
+///
+/// Like the strict path in codex-tools `strict_int`, a string with a
+/// leading `+` is rejected: JSON number syntax has no `+`, and accepting it
+/// here would let the mirror diverge from what the core handler accepts.
+fn lenient_int<T>(value: Option<&JsonValue>) -> Option<T>
+where
+    T: TryFrom<u64> + FromStr,
+{
+    let value = value?;
+    match value {
+        JsonValue::Number(number) => number.as_u64().and_then(|n| T::try_from(n).ok()),
+        JsonValue::String(text) => {
+            // Mirror `strict_int::parse_integer_literal` (spec §3.2,
+            // round-1 Major B4): `FromStr` accepts a leading `+`, JSON
+            // number syntax has none, so reject it before parsing.
+            if text.starts_with('+') {
+                None
+            } else {
+                text.parse::<T>().ok()
+            }
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Array(_) | JsonValue::Object(_) => None,
+    }
 }
 
 fn parse_terminal_response_payload(
@@ -581,8 +612,18 @@ struct DispatchedWriteStdinArgs {
     session_id: JsonValue,
     #[serde(default)]
     chars: String,
-    yield_time_ms: Option<u64>,
-    max_output_tokens: Option<usize>,
+    // Belt-and-braces symmetry with the core `write_stdin` handler fields,
+    // where `deserialize_with` breaks serde's implicit missing-`Option` ->
+    // `None` default, so an explicit `#[serde(default)]` is load-bearing
+    // there. This struct has no `deserialize_with`, so omission still
+    // reduces to `None` without these attributes (verified by running
+    // `dispatch_write_stdin_payload_tolerates_omitted_options` against an
+    // attribute-less copy); they pin the contract explicitly so a future
+    // `deserialize_with` or a blind cleanup cannot silently change it.
+    #[serde(default)]
+    yield_time_ms: Option<JsonValue>,
+    #[serde(default)]
+    max_output_tokens: Option<JsonValue>,
 }
 
 #[derive(Deserialize)]

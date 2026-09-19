@@ -10,6 +10,9 @@ use crate::tools::registry::PostToolUsePayload;
 use codex_exec_server::Environment;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_tools::UnifiedExecShellMode;
+use codex_tools::strict_u64;
+use codex_tools::strict_u64_opt;
+use codex_tools::strict_usize_opt;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,11 +36,14 @@ pub(crate) struct ExecCommandArgs {
     login: Option<bool>,
     #[serde(default = "default_tty")]
     tty: bool,
-    #[serde(default = "default_exec_yield_time_ms")]
+    #[serde(
+        default = "default_exec_yield_time_ms",
+        deserialize_with = "strict_u64"
+    )]
     yield_time_ms: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "strict_u64_opt")]
     timeout_ms: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "strict_usize_opt")]
     max_output_tokens: Option<usize>,
     #[serde(default)]
     sandbox_permissions: Option<SandboxPermissions>,

@@ -3,6 +3,7 @@ use crate::session::InputQueueActivity;
 use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v2;
 use codex_tools::ToolSpec;
+use codex_tools::strict_i64_opt;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -126,6 +127,10 @@ impl CoreToolRuntime for Handler {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WaitArgs {
+    // `#[serde(default)]` keeps the pre-ratchet behavior for a missing
+    // field (None); plain serde's implicit missing-`Option` handling does
+    // not apply once `deserialize_with` is present.
+    #[serde(default, deserialize_with = "strict_i64_opt")]
     timeout_ms: Option<i64>,
 }
 
@@ -203,3 +208,7 @@ async fn wait_for_activity(
         Ok(Err(_)) | Err(_) => WaitOutcome::TimedOut,
     }
 }
+
+#[cfg(test)]
+#[path = "wait_tests.rs"]
+mod tests;

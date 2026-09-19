@@ -18,6 +18,7 @@ use codex_tools::ResponsesApiTool;
 use codex_tools::ToolExposure;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_tools::strict_u64;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -32,6 +33,7 @@ pub struct SleepHandler;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SleepArgs {
+    #[serde(deserialize_with = "strict_u64")]
     duration_ms: u64,
 }
 
@@ -165,3 +167,7 @@ impl CoreToolRuntime for SleepHandler {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "sleep_tests.rs"]
+mod tests;

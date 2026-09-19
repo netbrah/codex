@@ -4,6 +4,9 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use codex_tools::strict_u64;
+use codex_tools::strict_u64_opt;
+use codex_tools::strict_usize;
 use serde::Deserialize;
 use tokio::sync::Barrier;
 use tokio::time::sleep;
@@ -35,16 +38,17 @@ struct BarrierState {
 #[derive(Debug, Deserialize)]
 struct BarrierArgs {
     id: String,
+    #[serde(deserialize_with = "strict_usize")]
     participants: usize,
-    #[serde(default = "default_timeout_ms")]
+    #[serde(default = "default_timeout_ms", deserialize_with = "strict_u64")]
     timeout_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
 struct TestSyncArgs {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "strict_u64_opt")]
     sleep_before_ms: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "strict_u64_opt")]
     sleep_after_ms: Option<u64>,
     #[serde(default)]
     barrier: Option<BarrierArgs>,
@@ -194,3 +198,7 @@ async fn wait_on_barrier(args: BarrierArgs) -> Result<(), FunctionCallError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "test_sync_tests.rs"]
+mod tests;

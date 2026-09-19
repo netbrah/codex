@@ -11,6 +11,8 @@ use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolExecutor;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_tools::strict_u64;
+use codex_tools::strict_usize_opt;
 
 use super::DEFAULT_WAIT_YIELD_TIME_MS;
 use super::ExecContext;
@@ -25,9 +27,12 @@ pub struct CodeModeWaitHandler;
 #[derive(Debug, Deserialize)]
 struct ExecWaitArgs {
     cell_id: String,
-    #[serde(default = "default_wait_yield_time_ms")]
+    #[serde(
+        default = "default_wait_yield_time_ms",
+        deserialize_with = "strict_u64"
+    )]
     yield_time_ms: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "strict_usize_opt")]
     max_tokens: Option<usize>,
     #[serde(default)]
     terminate: bool,
@@ -220,3 +225,7 @@ impl CoreToolRuntime for CodeModeWaitHandler {
         None
     }
 }
+
+#[cfg(test)]
+#[path = "wait_handler_tests.rs"]
+mod tests;

@@ -20,6 +20,7 @@ use crate::reducer::test_support::generic_summary;
 use crate::reducer::test_support::message;
 use crate::reducer::test_support::start_turn;
 use crate::reducer::test_support::trace_context;
+use crate::reducer::tool::terminal::lenient_int;
 use crate::replay_bundle;
 use crate::writer::TraceWriter;
 
@@ -436,6 +437,310 @@ fn dispatch_write_stdin_payload_reduces_to_terminal_operation() -> anyhow::Resul
     );
 
     Ok(())
+}
+
+#[test]
+fn dispatch_write_stdin_payload_coerces_string_integers() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let writer = create_started_writer(&temp)?;
+    start_turn(&writer, "turn-1")?;
+
+    let request_payload = writer.write_json_payload(
+        RawPayloadKind::ToolInvocation,
+        &json!({
+            "tool_name": "write_stdin",
+            "tool_namespace": null,
+            "payload": {
+                "type": "function",
+                "arguments": json!({
+                    "session_id": 123,
+                    "chars": "echo hi\n",
+                    "yield_time_ms": "250",
+                    "max_output_tokens": "2000"
+                }).to_string()
+            }
+        }),
+    )?;
+    let request_payload_id = request_payload.raw_payload_id.clone();
+    let tool_start = writer.append_with_context(
+        trace_context("turn-1"),
+        RawTraceEventPayload::ToolCallStarted {
+            tool_call_id: "tool-stdin".to_string(),
+            model_visible_call_id: Some("call-stdin".to_string()),
+            code_mode_runtime_tool_id: None,
+            requester: crate::raw_event::RawToolCallRequester::Model,
+            kind: ToolCallKind::WriteStdin,
+            summary: generic_summary("write_stdin"),
+            invocation_payload: Some(request_payload),
+        },
+    )?;
+
+    let response_payload = writer.write_json_payload(
+        RawPayloadKind::ToolResult,
+        &json!({
+            "type": "direct_response",
+            "response_item": {
+                "type": "function_call_output",
+                "call_id": "call-stdin",
+                "output": "hi\n"
+            }
+        }),
+    )?;
+    let response_payload_id = response_payload.raw_payload_id.clone();
+    let tool_end = writer.append_with_context(
+        trace_context("turn-1"),
+        RawTraceEventPayload::ToolCallEnded {
+            tool_call_id: "tool-stdin".to_string(),
+            status: ExecutionStatus::Completed,
+            result_payload: Some(response_payload),
+        },
+    )?;
+
+    let rollout = replay_bundle(temp.path())?;
+    let operation_id = "terminal_operation:1".to_string();
+
+    assert_eq!(
+        rollout.tool_calls["tool-stdin"].terminal_operation_id,
+        Some(operation_id.clone()),
+    );
+    assert_eq!(
+        rollout.terminal_operations[&operation_id],
+        TerminalOperation {
+            operation_id: operation_id.clone(),
+            terminal_id: Some("123".to_string()),
+            tool_call_id: "tool-stdin".to_string(),
+            kind: TerminalOperationKind::WriteStdin,
+            execution: ExecutionWindow {
+                started_at_unix_ms: tool_start.wall_time_unix_ms,
+                started_seq: tool_start.seq,
+                ended_at_unix_ms: Some(tool_end.wall_time_unix_ms),
+                ended_seq: Some(tool_end.seq),
+                status: ExecutionStatus::Completed,
+            },
+            request: TerminalRequest::WriteStdin {
+                stdin: "echo hi\n".to_string(),
+                yield_time_ms: Some(250),
+                max_output_tokens: Some(2000),
+            },
+            result: Some(TerminalResult {
+                exit_code: None,
+                stdout: "hi\n".to_string(),
+                stderr: String::new(),
+                formatted_output: Some("hi\n".to_string()),
+                original_token_count: None,
+                chunk_id: None,
+            }),
+            model_observations: Vec::new(),
+            raw_payload_ids: vec![request_payload_id, response_payload_id],
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn dispatch_write_stdin_payload_ignores_malformed_int_strings() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let writer = create_started_writer(&temp)?;
+    start_turn(&writer, "turn-1")?;
+
+    let request_payload = writer.write_json_payload(
+        RawPayloadKind::ToolInvocation,
+        &json!({
+            "tool_name": "write_stdin",
+            "tool_namespace": null,
+            "payload": {
+                "type": "function",
+                "arguments": json!({
+                    "session_id": 123,
+                    "chars": "echo hi\n",
+                    "yield_time_ms": "250",
+                    "max_output_tokens": "20xx"
+                }).to_string()
+            }
+        }),
+    )?;
+    let request_payload_id = request_payload.raw_payload_id.clone();
+    let tool_start = writer.append_with_context(
+        trace_context("turn-1"),
+        RawTraceEventPayload::ToolCallStarted {
+            tool_call_id: "tool-stdin".to_string(),
+            model_visible_call_id: Some("call-stdin".to_string()),
+            code_mode_runtime_tool_id: None,
+            requester: crate::raw_event::RawToolCallRequester::Model,
+            kind: ToolCallKind::WriteStdin,
+            summary: generic_summary("write_stdin"),
+            invocation_payload: Some(request_payload),
+        },
+    )?;
+
+    let response_payload = writer.write_json_payload(
+        RawPayloadKind::ToolResult,
+        &json!({
+            "type": "direct_response",
+            "response_item": {
+                "type": "function_call_output",
+                "call_id": "call-stdin",
+                "output": "hi\n"
+            }
+        }),
+    )?;
+    let response_payload_id = response_payload.raw_payload_id.clone();
+    let tool_end = writer.append_with_context(
+        trace_context("turn-1"),
+        RawTraceEventPayload::ToolCallEnded {
+            tool_call_id: "tool-stdin".to_string(),
+            status: ExecutionStatus::Completed,
+            result_payload: Some(response_payload),
+        },
+    )?;
+
+    let rollout = replay_bundle(temp.path())?;
+    let operation_id = "terminal_operation:1".to_string();
+
+    assert_eq!(
+        rollout.tool_calls["tool-stdin"].terminal_operation_id,
+        Some(operation_id.clone()),
+    );
+    assert_eq!(
+        rollout.terminal_operations[&operation_id],
+        TerminalOperation {
+            operation_id: operation_id.clone(),
+            terminal_id: Some("123".to_string()),
+            tool_call_id: "tool-stdin".to_string(),
+            kind: TerminalOperationKind::WriteStdin,
+            execution: ExecutionWindow {
+                started_at_unix_ms: tool_start.wall_time_unix_ms,
+                started_seq: tool_start.seq,
+                ended_at_unix_ms: Some(tool_end.wall_time_unix_ms),
+                ended_seq: Some(tool_end.seq),
+                status: ExecutionStatus::Completed,
+            },
+            request: TerminalRequest::WriteStdin {
+                stdin: "echo hi\n".to_string(),
+                yield_time_ms: Some(250),
+                max_output_tokens: None,
+            },
+            result: Some(TerminalResult {
+                exit_code: None,
+                stdout: "hi\n".to_string(),
+                stderr: String::new(),
+                formatted_output: Some("hi\n".to_string()),
+                original_token_count: None,
+                chunk_id: None,
+            }),
+            model_observations: Vec::new(),
+            raw_payload_ids: vec![request_payload_id, response_payload_id],
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn dispatch_write_stdin_payload_tolerates_omitted_options() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let writer = create_started_writer(&temp)?;
+    start_turn(&writer, "turn-1")?;
+
+    let request_payload = writer.write_json_payload(
+        RawPayloadKind::ToolInvocation,
+        &json!({
+            "tool_name": "write_stdin",
+            "tool_namespace": null,
+            "payload": {
+                "type": "function",
+                "arguments": json!({
+                    "session_id": 123,
+                    "chars": "echo hi\n"
+                }).to_string()
+            }
+        }),
+    )?;
+    let request_payload_id = request_payload.raw_payload_id.clone();
+    let tool_start = writer.append_with_context(
+        trace_context("turn-1"),
+        RawTraceEventPayload::ToolCallStarted {
+            tool_call_id: "tool-stdin".to_string(),
+            model_visible_call_id: Some("call-stdin".to_string()),
+            code_mode_runtime_tool_id: None,
+            requester: crate::raw_event::RawToolCallRequester::Model,
+            kind: ToolCallKind::WriteStdin,
+            summary: generic_summary("write_stdin"),
+            invocation_payload: Some(request_payload),
+        },
+    )?;
+
+    let response_payload = writer.write_json_payload(
+        RawPayloadKind::ToolResult,
+        &json!({
+            "type": "direct_response",
+            "response_item": {
+                "type": "function_call_output",
+                "call_id": "call-stdin",
+                "output": "hi\n"
+            }
+        }),
+    )?;
+    let response_payload_id = response_payload.raw_payload_id.clone();
+    let tool_end = writer.append_with_context(
+        trace_context("turn-1"),
+        RawTraceEventPayload::ToolCallEnded {
+            tool_call_id: "tool-stdin".to_string(),
+            status: ExecutionStatus::Completed,
+            result_payload: Some(response_payload),
+        },
+    )?;
+
+    let rollout = replay_bundle(temp.path())?;
+    let operation_id = "terminal_operation:1".to_string();
+
+    assert_eq!(
+        rollout.tool_calls["tool-stdin"].terminal_operation_id,
+        Some(operation_id.clone()),
+    );
+    assert_eq!(
+        rollout.terminal_operations[&operation_id],
+        TerminalOperation {
+            operation_id: operation_id.clone(),
+            terminal_id: Some("123".to_string()),
+            tool_call_id: "tool-stdin".to_string(),
+            kind: TerminalOperationKind::WriteStdin,
+            execution: ExecutionWindow {
+                started_at_unix_ms: tool_start.wall_time_unix_ms,
+                started_seq: tool_start.seq,
+                ended_at_unix_ms: Some(tool_end.wall_time_unix_ms),
+                ended_seq: Some(tool_end.seq),
+                status: ExecutionStatus::Completed,
+            },
+            request: TerminalRequest::WriteStdin {
+                stdin: "echo hi\n".to_string(),
+                yield_time_ms: None,
+                max_output_tokens: None,
+            },
+            result: Some(TerminalResult {
+                exit_code: None,
+                stdout: "hi\n".to_string(),
+                stderr: String::new(),
+                formatted_output: Some("hi\n".to_string()),
+                original_token_count: None,
+                chunk_id: None,
+            }),
+            model_observations: Vec::new(),
+            raw_payload_ids: vec![request_payload_id, response_payload_id],
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn lenient_int_rejects_leading_plus_strings() {
+    // Mirrors the strict path (codex-tools `strict_int`): JSON number syntax
+    // has no leading `+`, and `FromStr` would accept one.
+    assert_eq!(lenient_int::<u64>(Some(&json!("12"))), Some(12));
+    assert_eq!(lenient_int::<u64>(Some(&json!("+12"))), None);
+    assert_eq!(lenient_int::<usize>(Some(&json!("+12"))), None);
 }
 
 #[test]
