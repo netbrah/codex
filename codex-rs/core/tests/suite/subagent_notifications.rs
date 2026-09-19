@@ -1734,12 +1734,13 @@ async fn spawned_full_history_v2_child_uses_model_precedence_without_dropping_co
             "proactive policy should share a developer message with unrelated context: {proactive_developer_messages:?}"
         );
         let explicit_request = explicit_turn.single_request();
+        // fork default (apex-xt2.9 item 2, spec §7.5 row 5): the High leg recomputes Proactive, so the parent keeps the proactive policy
         assert!(
             explicit_request
                 .message_input_texts("developer")
                 .iter()
-                .any(|text| text.contains(FULL_HISTORY_EXPLICIT_POLICY)),
-            "restored parent policy should require an explicit delegation request"
+                .any(|text| text.contains(FULL_HISTORY_PROACTIVE_POLICY)),
+            "parent policy should stay proactive on the non-Ultra leg"
         );
     }
     test.submit_turn(TURN_1_PROMPT).await?;
@@ -1815,6 +1816,7 @@ async fn spawned_full_history_v2_child_uses_model_precedence_without_dropping_co
         selection,
         FullHistoryV2ModelSelection::MultiAgentModeTransitions
     ) {
+        // fork default (apex-xt2.9 item 2, spec §7.5 row 5): the parent's final mode is Proactive, so the child's single mode block carries it
         assert_eq!(
             (
                 child_developer_messages
@@ -1834,7 +1836,7 @@ async fn spawned_full_history_v2_child_uses_model_precedence_without_dropping_co
                     .filter(|message| message.contains(FULL_HISTORY_SHARED_USAGE_HINT))
                     .count(),
             ),
-            (1, 1, 0, 1)
+            (1, 0, 1, 1)
         );
     }
     if matches!(selection, FullHistoryV2ModelSelection::CurrentTimeReminders) {

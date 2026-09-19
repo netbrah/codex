@@ -1157,9 +1157,10 @@ async fn active_model_switch_updates_core_context_from_captured_settings(
     let initial_instructions = format!("Instructions for {MODEL_A}.");
     assert_eq!(requests[0].instructions_text(), initial_instructions);
     assert!(!requests[0].body_contains_text("<model_switch>"));
+    // fork default (apex-xt2.9 item 2, spec §7.5 row 9): the mode block carries the bundled proactive text (catalogue proactive is None)
     for text in [
         format!("Root role for {MODEL_A}."),
-        format!("Delegation policy for {MODEL_A}."),
+        "Proactive multi-agent delegation is active.".to_string(),
     ] {
         assert!(requests[0].body_contains_text(&text));
     }
@@ -1187,11 +1188,28 @@ async fn active_model_switch_updates_core_context_from_captured_settings(
             !request.body_contains_text("<personality_spec>"),
             "model-switch instructions should not contain a personality update"
         );
+        // fork default (apex-xt2.9 item 2, spec §7.5 row 9): the model switch re-emits the
+        // <multi_agent_mode> block (usage_hint_hash change, latest-wins), so the bundled
+        // proactive text occurs twice while the other section texts occur once
+        let proactive_messages: Vec<&String> = developer_texts
+            .iter()
+            .filter(|message| message.contains("Proactive multi-agent delegation is active."))
+            .collect();
+        assert_eq!(proactive_messages.len(), 2);
+        for message in proactive_messages {
+            assert!(
+                message.contains("<multi_agent_mode>"),
+                "proactive mode text must stay inside <multi_agent_mode>: {message}"
+            );
+            assert!(
+                !message.contains("<model_switch>"),
+                "proactive mode text must not appear in <model_switch>: {message}"
+            );
+        }
         for text in [
             format!("Default collaboration for {MODEL_B}."),
             format!("Approval instructions for {MODEL_B}."),
             format!("Root role for {MODEL_B}."),
-            format!("Delegation policy for {MODEL_B}."),
         ] {
             assert_eq!(
                 developer_texts
@@ -1324,7 +1342,8 @@ async fn active_model_switch_updates_multi_agent_policy_from_captured_effort(
     assert_eq!(requests[1].body_json()["model"], MODEL_B);
     assert_eq!(requests[1].body_json()["reasoning"]["effort"], "xhigh");
     let proactive_text = "Proactive multi-agent delegation is active.";
-    assert!(!requests[0].body_contains_text(proactive_text));
+    // fork default (apex-xt2.9 item 2, spec §7.5 row 8): the non-Ultra MODEL_A leg is Proactive in both test cases
+    assert!(requests[0].body_contains_text(proactive_text));
     assert!(requests[1].body_contains_text(proactive_text));
 
     Ok(())

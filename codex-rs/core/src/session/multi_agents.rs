@@ -97,15 +97,19 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
     let multi_agent_mode = match hint {
         Some(text) => MultiAgentMode::Custom(text.to_owned()),
         None => {
-            let (message, builtin) =
-                if settings.effective_reasoning_effort() == Some(ReasoningEffort::Ultra) {
-                    (multi_agent_messages.proactive, MultiAgentMode::Proactive)
-                } else {
-                    (
-                        multi_agent_messages.explicit,
-                        MultiAgentMode::ExplicitRequestOnly,
-                    )
-                };
+            // Fork default (codex-combined on-prem build): Proactive unless a
+            // hint-text override is configured; upstream stays effort-derived.
+            let (message, builtin) = if settings.effective_reasoning_effort()
+                == Some(ReasoningEffort::Ultra)
+                || crate::fork_defaults::proactive_delegation_default()
+            {
+                (multi_agent_messages.proactive, MultiAgentMode::Proactive)
+            } else {
+                (
+                    multi_agent_messages.explicit,
+                    MultiAgentMode::ExplicitRequestOnly,
+                )
+            };
             match message {
                 ResolvedMessage::Catalog(text) => MultiAgentMode::Custom(text.to_owned()),
                 ResolvedMessage::Bundled(_) => builtin,
@@ -124,3 +128,7 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
         SessionSource::Internal(_) | SessionSource::SubAgent(_) => None,
     }
 }
+
+#[cfg(test)]
+#[path = "multi_agent_mode_selection_tests.rs"]
+mod multi_agent_mode_selection_tests;

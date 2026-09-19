@@ -2726,6 +2726,36 @@ async fn turn_start_accepts_deprecated_personality_override_v2() -> Result<()> {
     Ok(())
 }
 
+/// Collects developer-role `message` text spans of both `input_text` and `text` types.
+///
+/// The fork's wire normalization re-labels `input_text` spans as `text` for
+/// non-OpenAI providers: `normalize_content_type_strings` and
+/// `translate_agent_message_items` (both defined in
+/// `codex-api/src/endpoint/content_type_compat.rs`) are applied from
+/// `codex-api/src/endpoint/responses.rs` when the `normalize_content_types`
+/// option is set, and that option is decided as `!is_openai()` in
+/// `codex-rs/model-provider/src/provider.rs`. `MockResponsesConfig` is a
+/// non-OpenAI provider, so the shared `message_input_texts` helper (which
+/// matches `input_text` only) sees an empty list on these normalized
+/// requests. Spec §7.5 rows 6/7 (apex-xt2.9 item 2); apex-xt2.13: consider
+/// widening the shared helper so this local extraction becomes unnecessary.
+fn normalized_developer_message_texts(request: responses::ResponsesRequest) -> Vec<String> {
+    request
+        .inputs_of_type("message")
+        .into_iter()
+        .filter(|item| item.get("role").and_then(Value::as_str) == Some("developer"))
+        .filter_map(|item| item.get("content").and_then(Value::as_array).cloned())
+        .flatten()
+        .filter(|span| {
+            matches!(
+                span.get("type").and_then(Value::as_str),
+                Some("input_text" | "text")
+            )
+        })
+        .filter_map(|span| span.get("text").and_then(Value::as_str).map(str::to_owned))
+        .collect()
+}
+
 #[tokio::test]
 async fn turn_start_ignores_deprecated_multi_agent_mode() -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -2776,16 +2806,19 @@ async fn turn_start_ignores_deprecated_multi_agent_mode() -> Result<()> {
     )
     .await??;
 
-    let developer_texts = response_mock
-        .single_request()
-        .message_input_texts("developer");
-    assert!(developer_texts.iter().any(|text| {
-        text.contains(
-            "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents",
-        )
-    }));
+    let developer_texts = normalized_developer_message_texts(response_mock.single_request());
+    // fork default (apex-xt2.9 item 2, spec §7.5 row 6): the session runs Proactive, so the policy texts invert
     assert!(
         !developer_texts
+            .iter()
+            .any(|text| {
+                text.contains(
+                    "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents",
+                )
+            })
+    );
+    assert!(
+        developer_texts
             .iter()
             .any(|text| text.contains("Proactive multi-agent delegation is active."))
     );
@@ -2848,19 +2881,20 @@ async fn thread_start_ignores_deprecated_multi_agent_mode() -> Result<()> {
     )
     .await??;
 
-    let developer_texts = response_mock
-        .single_request()
-        .message_input_texts("developer");
+    // fork default (apex-xt2.9 item 2, spec §7.5 row 7): the session runs Proactive while the reported field stays the deprecated constant
+    let developer_texts = normalized_developer_message_texts(response_mock.single_request());
     assert!(developer_texts.iter().any(|text| {
         text.contains(MULTI_AGENT_MODE_OPEN_TAG)
-            && text.contains(
-                "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents",
-            )
+            && text.contains("Proactive multi-agent delegation is active.")
     }));
     assert!(
         !developer_texts
             .iter()
-            .any(|text| text.contains("Proactive multi-agent delegation is active."))
+            .any(|text| {
+                text.contains(
+                    "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents",
+                )
+            })
     );
 
     Ok(())

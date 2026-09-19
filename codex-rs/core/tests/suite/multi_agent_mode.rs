@@ -229,10 +229,12 @@ async fn mode_hints_override_reasoning_effort(source: ModeHintSource) -> Result<
 }
 
 #[test_case(ReasoningEffort::Ultra, Some(CATALOG_PROACTIVE_TEXT), Some(CATALOG_PROACTIVE_TEXT); "ultra uses proactive override")]
-#[test_case(ReasoningEffort::High, Some(CATALOG_PROACTIVE_TEXT), Some(CATALOG_EXPLICIT_TEXT); "non ultra ignores proactive override")]
+// fork default (apex-xt2.9 item 2, spec §7.5 row 1): non-Ultra legs select the Proactive branch, so the catalogue proactive text is emitted
+#[test_case(ReasoningEffort::High, Some(CATALOG_PROACTIVE_TEXT), Some(CATALOG_PROACTIVE_TEXT); "non ultra ignores proactive override")]
 #[test_case(ReasoningEffort::Ultra, None, Some(PROACTIVE_TEXT); "ultra falls back to built in")]
 #[test_case(ReasoningEffort::Ultra, Some(""), None; "empty proactive suppresses ultra mode")]
-#[test_case(ReasoningEffort::High, Some(""), Some(CATALOG_EXPLICIT_TEXT); "empty proactive leaves non ultra unchanged")]
+// fork default (apex-xt2.9 item 2, spec §7.5 row 2): the empty catalogue proactive text now suppresses the mode message entirely
+#[test_case(ReasoningEffort::High, Some(""), None; "empty proactive leaves non ultra unchanged")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn catalog_proactive_mode_is_ultra_only(
     effort: ReasoningEffort,
@@ -281,7 +283,8 @@ async fn catalog_proactive_mode_is_ultra_only(
     Ok(())
 }
 
-#[test_case(ReasoningEffort::High, [CATALOG_EXPLICIT_TEXT, SECOND_MODEL_EXPLICIT_TEXT]; "explicit mode")]
+// fork default (apex-xt2.9 item 2, spec §7.5 row 3): non-Ultra legs emit the catalogue proactive texts
+#[test_case(ReasoningEffort::High, [CATALOG_PROACTIVE_TEXT, SECOND_MODEL_PROACTIVE_TEXT]; "explicit mode")]
 #[test_case(ReasoningEffort::Ultra, [CATALOG_PROACTIVE_TEXT, SECOND_MODEL_PROACTIVE_TEXT]; "proactive mode")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn model_switch_refreshes_catalog_role_and_mode(
@@ -529,13 +532,14 @@ async fn live_mode_change_appends_mode_without_reappending_usage_hint() -> Resul
 
     let second_input = requests[1].input();
     let second_texts = developer_texts(&second_input);
+    // fork default (apex-xt2.9 item 2, spec §7.5 row 4): the High leg recomputes Proactive, so no explicit-mode block is appended
     assert_eq!(
         (
             count_containing(&second_texts, ROOT_USAGE_HINT_TEXT),
             count_containing(&second_texts, PROACTIVE_TEXT),
             count_containing(&second_texts, NO_SPAWN_TEXT),
         ),
-        (1, 1, 1),
+        (1, 1, 0),
     );
     test.codex.ensure_rollout_materialized().await;
     test.codex.flush_rollout().await?;
@@ -554,7 +558,8 @@ async fn live_mode_change_appends_mode_without_reappending_usage_hint() -> Resul
         .collect::<Vec<_>>();
     assert_eq!(
         recorded_modes,
-        [json!("proactive"), json!("explicitRequestOnly")]
+        // fork default (apex-xt2.9 item 2, spec §7.5 row 4): Proactive→Proactive emits no second mode record
+        [json!("proactive")]
     );
 
     Ok(())
@@ -606,13 +611,14 @@ async fn leaving_ultra_after_cold_resume_emits_explicit_mode() -> Result<()> {
     );
     let resumed_input = requests[1].input();
     let texts = developer_texts(&resumed_input);
+    // fork default (apex-xt2.9 item 2, spec §7.5 row 10): the post-resume High leg stays Proactive, so no mode-change block is emitted
     assert_eq!(
         (
             count_containing(&texts, MULTI_AGENT_MODE_OPEN_TAG),
             count_containing(&texts, NO_SPAWN_TEXT),
             count_containing(&texts, PROACTIVE_TEXT),
         ),
-        (2, 1, 1)
+        (1, 0, 1)
     );
 
     Ok(())
