@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 #[test]
@@ -271,4 +272,346 @@ fn translate_agent_message_preserves_encrypted_payload_as_text() {
     assert_eq!(content[1]["text"], "child says 408");
     assert!(item.get("author").is_none());
     assert!(item.get("recipient").is_none());
+}
+
+// Tool-output (`output` field) normalization: the Responses->ChatCompletions
+// shim gap for function_call_output / custom_tool_call_output items (their
+// payload rides `output`, not `content`).
+
+#[test]
+fn collapses_all_text_tool_output_filtering_blank_segments() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": [
+                    {"type": "input_text", "text": "A"},
+                    {"type": "input_text", "text": "   "},
+                    {"type": "input_text", "text": "B"}
+                ]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "A\nB"
+        })
+    );
+}
+
+#[test]
+fn collapses_mixed_text_label_tool_output() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": [
+                    {"type": "input_text", "text": "A"},
+                    {"type": "output_text", "text": "B"},
+                    {"type": "text", "text": "C"}
+                ]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "A\nB\nC"
+        })
+    );
+}
+
+#[test]
+fn relabels_text_part_in_mixed_tool_output_keeps_array() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": [
+                    {"type": "input_text", "text": "A"},
+                    {"type": "input_image", "image_url": "https://example.com/diagram.png", "detail": "high"}
+                ]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    // Array kept: text part relabelled, image part byte-identical.
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": [
+                {"type": "text", "text": "A"},
+                {"type": "input_image", "image_url": "https://example.com/diagram.png", "detail": "high"}
+            ]
+        })
+    );
+}
+
+#[test]
+fn leaves_string_tool_output_untouched() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": "already a string"
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "already a string"
+        })
+    );
+}
+
+#[test]
+fn leaves_missing_and_null_tool_output_untouched() {
+    let mut value = json!({
+        "input": [
+            {"type": "function_call_output", "call_id": "call-1"},
+            {"type": "function_call_output", "call_id": "call-2", "output": null}
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value,
+        json!({
+            "input": [
+                {"type": "function_call_output", "call_id": "call-1"},
+                {"type": "function_call_output", "call_id": "call-2", "output": null}
+            ]
+        })
+    );
+}
+
+// Pinned incident fixture (thread 01a0b07a: codegraph_explore on glm-5.2 via
+// the LiteLLM Responses->ChatCompletions shim). The real part[1] text (11,933
+// chars) contains the literal substring `input_text`, so these stand-ins keep
+// the shape (short wall-time fragment + long source dump ending in the same
+// tail) while staying substring-free; the padding choice is recorded in the
+// campaign report / commit body.
+const T6_PART_0: &str = "Wall time 0.0412 seconds\nChunk ID: 83e5c1";
+const T6_PART_1: &str = "Here are the relevant symbols, grouped by file, with verbatim source:\n\ncodex-api/src/endpoint/content_type_compat.rs\n  fn normalize_content_types(value: &mut Value) {\n      // rewrites part types for shim-compatible providers\n  }\n\nCall path: responses endpoint -> provider request -> serialized body.\n\nThe source above is already read-equivalent; do not re-open those files. Synthesize once you've used 2.";
+
+#[test]
+fn incident_repro_codegraph_tool_output_collapses_end_to_end() {
+    let mut value = json!({
+        "model": "glm-5.2",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Explore the content-type seam and report the call path."},
+                    {"type": "input_text", "text": "Keep the answer short."}
+                ]
+            },
+            {
+                "type": "function_call",
+                "name": "mcp__codegraph.codegraph_explore",
+                "call_id": "call-cg1",
+                "arguments": "{\"query\":\"normalize_content_types content_type_compat serialized body\"}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call-cg1",
+                "output": [
+                    {"type": "input_text", "text": T6_PART_0},
+                    {"type": "input_text", "text": T6_PART_1}
+                ]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    // Primary: the 2-part codegraph-shaped output collapses to one string.
+    assert_eq!(
+        value["input"][2]["output"],
+        format!("{T6_PART_0}\n{T6_PART_1}")
+    );
+    // The message content parts relabel on the content path; the function_call
+    // item is untouched.
+    assert_eq!(value["input"][0]["content"][0]["type"], "text");
+    assert_eq!(value["input"][0]["content"][1]["type"], "text");
+    assert_eq!(
+        value["input"][1]["name"],
+        "mcp__codegraph.codegraph_explore"
+    );
+    assert_eq!(
+        value["input"][1]["arguments"],
+        "{\"query\":\"normalize_content_types content_type_compat serialized body\"}"
+    );
+
+    // Secondary: the whole serialized body is free of the rejected label.
+    let serialized = serde_json::to_string(&value).expect("body should serialize");
+    assert!(
+        !serialized.contains("input_text"),
+        "body still contains input_text: {serialized}"
+    );
+
+    // Tertiary: both part texts survive in the collapsed string (the
+    // model-visible payload), in order.
+    let collapsed = value["input"][2]["output"]
+        .as_str()
+        .expect("output should be a string");
+    let first = collapsed.find(T6_PART_0).expect("part 0 text present");
+    let second = collapsed.find(T6_PART_1).expect("part 1 text present");
+    assert!(first < second, "part texts out of order");
+}
+
+#[test]
+fn collapses_custom_tool_call_output_text_array() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "call-1",
+                "output": [
+                    {"type": "input_text", "text": "first"},
+                    {"type": "input_text", "text": "second"}
+                ]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "custom_tool_call_output",
+            "call_id": "call-1",
+            "output": "first\nsecond"
+        })
+    );
+}
+
+#[test]
+fn collapses_all_encrypted_tool_output_to_empty_string() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": [{"type": "encrypted_content", "encrypted_content": "cipher"}]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": ""
+        })
+    );
+}
+
+#[test]
+fn relabels_and_drops_encrypted_in_mixed_tool_output() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": [
+                    {"type": "input_text", "text": "A"},
+                    {"type": "encrypted_content", "encrypted_content": "cipher"}
+                ]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": [{"type": "text", "text": "A"}]
+        })
+    );
+}
+
+#[test]
+fn leaves_empty_tool_output_array_untouched() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": []
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": []
+        })
+    );
+}
+
+#[test]
+fn collapses_blank_only_tool_output_to_empty_string() {
+    let mut value = json!({
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": [
+                    {"type": "input_text", "text": " "},
+                    {"type": "input_text", "text": ""}
+                ]
+            }
+        ]
+    });
+
+    super::normalize_content_types(&mut value);
+
+    assert_eq!(
+        value["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": ""
+        })
+    );
 }

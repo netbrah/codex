@@ -14,6 +14,16 @@
 /// the `input` array of a serialized [`crate::common::ResponsesApiRequest`]
 /// and rewrites those type strings so the shim accepts the request.
 ///
+/// Tool-output items (`function_call_output`, `custom_tool_call_output`)
+/// carry their payload in `output` rather than `content`; shims that fold
+/// such items into a user message pass those parts through to the
+/// ChatCompletions user-content union, which hard-rejects part types it does
+/// not know (e.g. `input_text`). An all-text `output` array therefore
+/// collapses to a single string (blank segments filtered, segments joined
+/// with `"\n"`) — the most conservative legal shape — and a mixed array has
+/// its text parts relabelled in place with undecryptable `encrypted_content`
+/// parts dropped.
+///
 /// `encrypted_content` content parts are handled per item type. An
 /// `agent_message`'s part holds the plain-text inter-agent message (codex never
 /// encrypts it — it is a label for OpenAI's server-side handling), so it is
@@ -26,19 +36,12 @@ pub fn normalize_content_types(value: &mut serde_json::Value) {
     };
     for item in input.iter_mut() {
         let is_agent_message = item.get("type").and_then(|t| t.as_str()) == Some("agent_message");
-        let Some(content) = item.get_mut("content").and_then(|v| v.as_array_mut()) else {
-            continue;
-        };
-        for part in content.iter_mut() {
-            if let Some(type_str) = part.get("type").and_then(|t| t.as_str()) {
-                if type_str == "input_text" || type_str == "output_text" {
-                    if let Some(obj) = part.as_object_mut() {
-                        obj.insert(
-                            "type".to_string(),
-                            serde_json::Value::String("text".to_string()),
-                        );
-                    }
-                } else if type_str == "encrypted_content" && is_agent_message {
+        if let Some(content) = item.get_mut("content").and_then(|v| v.as_array_mut()) {
+            for part in content.iter_mut() {
+                let type_str = part.get("type").and_then(|t| t.as_str());
+                if matches!(type_str, Some("input_text") | Some("output_text")) {
+                    relabel_text_part(part);
+                } else if type_str == Some("encrypted_content") && is_agent_message {
                     // Relabel the plain-text inter-agent payload to a `text` part
                     // so the receiving model actually reads it.
                     if let Some(obj) = part.as_object_mut() {
@@ -55,12 +58,83 @@ pub fn normalize_content_types(value: &mut serde_json::Value) {
                     }
                 }
             }
+            // Drop any encrypted_content parts NOT relabelled above: they carry
+            // genuine, undecryptable provider-side ciphertext (e.g. reasoning) that a
+            // Responses->ChatCompletions shim hard-rejects.
+            content.retain(|part| {
+                part.get("type").and_then(|t| t.as_str()) != Some("encrypted_content")
+            });
         }
-        // Drop any encrypted_content parts NOT relabelled above: they carry
-        // genuine, undecryptable provider-side ciphertext (e.g. reasoning) that a
-        // Responses->ChatCompletions shim hard-rejects.
-        content
-            .retain(|part| part.get("type").and_then(|t| t.as_str()) != Some("encrypted_content"));
+        normalize_tool_output(item);
+    }
+}
+
+/// Rewrites an `input_text` or `output_text` content part type to the
+/// ChatCompletions `text` type in place. Returns `true` when the part was a
+/// text part and was relabelled.
+fn relabel_text_part(part: &mut serde_json::Value) -> bool {
+    let is_text_part = matches!(
+        part.get("type").and_then(|t| t.as_str()),
+        Some("input_text") | Some("output_text")
+    );
+    if is_text_part && let Some(obj) = part.as_object_mut() {
+        obj.insert(
+            "type".to_string(),
+            serde_json::Value::String("text".to_string()),
+        );
+        return true;
+    }
+    false
+}
+
+/// Normalizes a tool-output item's `output` field (see
+/// [`normalize_content_types`]): all-text arrays collapse to a single string,
+/// mixed arrays keep their shape with text parts relabelled in place and
+/// undecryptable `encrypted_content` parts dropped.
+fn normalize_tool_output(item: &mut serde_json::Value) {
+    let Some(output) = item.get_mut("output") else {
+        // No `output` field: untouched.
+        return;
+    };
+    let Some(parts) = output.as_array_mut() else {
+        // `null`, a plain string, or any other non-array value: untouched.
+        return;
+    };
+    if parts.is_empty() {
+        // No parts that could mismatch the shim union: passthrough.
+        return;
+    }
+    let all_text = parts.iter().all(|part| {
+        let Some(obj) = part.as_object() else {
+            return false;
+        };
+        let text_type = matches!(
+            obj.get("type").and_then(|t| t.as_str()),
+            Some("input_text") | Some("output_text") | Some("text")
+        );
+        text_type && obj.get("text").and_then(|t| t.as_str()).is_some()
+    });
+    if all_text {
+        // Collapse to a single string, mirroring
+        // `function_call_output_content_items_to_text` (protocol `models.rs`):
+        // filter empty/whitespace-only segments first, then join the rest.
+        let joined = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|t| t.as_str()))
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        *output = serde_json::Value::String(joined);
+        return;
+    }
+    for part in parts.iter_mut() {
+        relabel_text_part(part);
+    }
+    // Drop undecryptable provider-side ciphertext (same rationale as the
+    // content path): a shim cannot surface it to the model.
+    parts.retain(|part| part.get("type").and_then(|t| t.as_str()) != Some("encrypted_content"));
+    if parts.is_empty() {
+        *output = serde_json::Value::String(String::new());
     }
 }
 
