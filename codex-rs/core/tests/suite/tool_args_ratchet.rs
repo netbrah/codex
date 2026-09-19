@@ -34,6 +34,12 @@ use serde_json::json;
 const EXPECTED_INTEGER_ERROR: &str =
     "expected an integer (JSON number, or a string containing only an integer literal)";
 
+// Suite-level v2 multi-agent namespace: the suite's built-in `openai`
+// provider has `namespace_tools: true` and `multi_agent_v2.tool_namespace`
+// defaults to `Some("collaboration")`, so plain-named v2 handlers only route
+// through the namespaced call form.
+const MULTI_AGENT_V2_NAMESPACE: &str = "collaboration";
+
 fn enable_sleep_tool(config: &mut codex_core::config::Config) {
     config.include_environment_context = false;
     config
@@ -436,7 +442,7 @@ async fn ratchet_a_wait_agent_v2_number_args_no_regression() -> Result<()> {
                 ev_response_created("resp-1"),
                 ev_function_call_with_namespace(
                     "wait-v2",
-                    "collaboration",
+                    MULTI_AGENT_V2_NAMESPACE,
                     "wait_agent",
                     r#"{"timeout_ms":50}"#,
                 ),
@@ -571,6 +577,60 @@ async fn ratchet_a_test_sync_number_args_no_regression() -> Result<()> {
         "JSON number arguments should still parse, got: {output}"
     );
     assert_eq!(output, "ok");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ratchet_b_wait_agent_unknown_field_names_tool_and_parameter() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call_with_namespace(
+                    "wait-b",
+                    MULTI_AGENT_V2_NAMESPACE,
+                    "wait_agent",
+                    r#"{"target":"task_1"}"#,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-2", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_model("gpt-5.4")
+        .with_config(|config| {
+            let _ = config.features.enable(Feature::MultiAgentV2);
+            config.multi_agent_v2.min_wait_timeout_ms = 50;
+        })
+        .build_with_auto_env(&server)
+        .await?;
+
+    test.submit_turn("wait for agents").await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output = requests[1]
+        .function_call_output_text("wait-b")
+        .expect("wait_agent should produce function call output");
+    assert!(
+        output.contains("failed to parse arguments for wait_agent"),
+        "parse error should name the tool, got: {output}"
+    );
+    assert!(
+        output.contains("(parameter \"target\")"),
+        "parse error should name the unknown parameter, got: {output}"
+    );
 
     Ok(())
 }

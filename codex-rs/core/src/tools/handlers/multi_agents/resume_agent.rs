@@ -44,7 +44,7 @@ async fn handle_resume_agent(
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
-    let args: ResumeAgentArgs = parse_arguments(&arguments)?;
+    let args: ResumeAgentArgs = parse_arguments("resume_agent", &arguments)?;
     let receiver_thread_id = ThreadId::from_string(&args.id).map_err(|err| {
         FunctionCallError::RespondToModel(format!("invalid agent id {}: {err:?}", args.id))
     })?;

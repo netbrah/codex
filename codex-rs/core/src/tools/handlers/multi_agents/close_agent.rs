@@ -40,7 +40,7 @@ async fn handle_close_agent(
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
-    let args: CloseAgentArgs = parse_arguments(&arguments)?;
+    let args: CloseAgentArgs = parse_arguments("close_agent", &arguments)?;
     let agent_id = parse_agent_id_target(&args.target)?;
     let receiver_agent = session.services.agent_control.get_agent_metadata(agent_id);
     let known_agent = receiver_agent.is_some();

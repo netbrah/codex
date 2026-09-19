@@ -62,8 +62,9 @@ impl ListMcpResourceTemplatesHandler {
             }
         };
 
-        let arguments = parse_arguments(arguments.as_str())?;
-        let args: ListResourceArgs = parse_args_with_default(arguments.clone())?;
+        let arguments = parse_arguments("list_mcp_resource_templates", arguments.as_str())?;
+        let args: ListResourceArgs =
+            parse_args_with_default("list_mcp_resource_templates", arguments.clone())?;
         let args = args.normalized();
 
         let invocation = McpInvocation {

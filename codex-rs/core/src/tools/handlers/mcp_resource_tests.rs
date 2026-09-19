@@ -73,16 +73,20 @@ fn call_tool_result_from_content_marks_success() {
 #[test]
 fn parse_arguments_handles_empty_and_json() {
     assert!(
-        parse_arguments(" \n\t").unwrap().is_none(),
+        parse_arguments("list_mcp_resources", " \n\t")
+            .unwrap()
+            .is_none(),
         "expected None for empty arguments"
     );
 
     assert!(
-        parse_arguments("null").unwrap().is_none(),
+        parse_arguments("read_mcp_resource", "null")
+            .unwrap()
+            .is_none(),
         "expected None for null arguments"
     );
 
-    let value = parse_arguments(r#"{"server":"figma"}"#)
+    let value = parse_arguments("read_mcp_resource", r#"{"server":"figma"}"#)
         .expect("parse json")
         .expect("value present");
     assert_eq!(value["server"], json!("figma"));

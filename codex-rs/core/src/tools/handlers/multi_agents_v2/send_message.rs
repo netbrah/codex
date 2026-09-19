@@ -37,7 +37,7 @@ impl Handler {
         analytics: &mut ToolCallAnalytics,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let arguments = function_arguments(invocation.payload.clone())?;
-        let args: SendMessageArgs = parse_arguments(&arguments)?;
+        let args: SendMessageArgs = parse_arguments("send_message", &arguments)?;
         handle_message_string_tool(
             invocation,
             MessageDeliveryMode::QueueOnly,

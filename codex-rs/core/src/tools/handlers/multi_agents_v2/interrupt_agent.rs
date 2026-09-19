@@ -42,7 +42,7 @@ async fn handle_interrupt_agent(
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
-    let args: InterruptAgentArgs = parse_arguments(&arguments)?;
+    let args: InterruptAgentArgs = parse_arguments("interrupt_agent", &arguments)?;
     let agent_id = resolve_agent_target(&session, &turn, &args.target).await?;
     analytics.set_receiver(agent_id);
     let AgentInterruptOutcome {

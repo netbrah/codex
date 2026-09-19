@@ -308,7 +308,7 @@ async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
     let req = second_mock.single_request();
     let (output_text, success_flag) = call_output(&req, call_id);
     assert!(
-        output_text.contains("failed to parse function arguments"),
+        output_text.contains("failed to parse arguments for update_plan"),
         "expected parse error message in output text, got {output_text:?}"
     );
     if let Some(success_flag) = success_flag {

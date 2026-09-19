@@ -122,7 +122,8 @@ impl ToolExecutor<ToolInvocation> for WaitForEnvironmentHandler {
                     )));
                 }
             };
-            let args: WaitForEnvironmentArgs = parse_arguments(&arguments)?;
+            let args: WaitForEnvironmentArgs =
+                parse_arguments(WAIT_FOR_ENVIRONMENT_TOOL_NAME, &arguments)?;
             let environment_id = args.environment_id;
             let already_ready = step_context
                 .environments

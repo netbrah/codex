@@ -73,7 +73,7 @@ impl ToolExecutor<ToolInvocation> for SendMessageToUserAsyncHandler {
                     "{TOOL_NAME} handler received unsupported payload"
                 )));
             };
-            let args: SendMessageToUserAsyncArgs = parse_arguments(&arguments)?;
+            let args: SendMessageToUserAsyncArgs = parse_arguments(TOOL_NAME, &arguments)?;
             let message = args.message.trim();
             if message.is_empty() {
                 return Err(FunctionCallError::RespondToModel(

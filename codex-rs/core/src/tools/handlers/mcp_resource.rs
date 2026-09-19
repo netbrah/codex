@@ -370,12 +370,14 @@ where
     Ok(FunctionToolOutput::from_text(content, Some(true)))
 }
 
-fn parse_arguments(raw_args: &str) -> Result<Option<Value>, FunctionCallError> {
+fn parse_arguments(tool_name: &str, raw_args: &str) -> Result<Option<Value>, FunctionCallError> {
     if raw_args.trim().is_empty() {
         Ok(None)
     } else {
         let value: Value = serde_json::from_str(raw_args).map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
+            FunctionCallError::RespondToModel(format!(
+                "failed to parse arguments for {tool_name}: {err}"
+            ))
         })?;
         if value.is_null() {
             Ok(None)
@@ -385,26 +387,31 @@ fn parse_arguments(raw_args: &str) -> Result<Option<Value>, FunctionCallError> {
     }
 }
 
-fn parse_args<T>(arguments: Option<Value>) -> Result<T, FunctionCallError>
+fn parse_args<T>(tool_name: &str, arguments: Option<Value>) -> Result<T, FunctionCallError>
 where
     T: DeserializeOwned,
 {
     match arguments {
         Some(value) => serde_json::from_value(value).map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
+            FunctionCallError::RespondToModel(format!(
+                "failed to parse arguments for {tool_name}: {err}"
+            ))
         }),
-        None => Err(FunctionCallError::RespondToModel(
-            "failed to parse function arguments: expected value".to_string(),
-        )),
+        None => Err(FunctionCallError::RespondToModel(format!(
+            "failed to parse arguments for {tool_name}: expected value"
+        ))),
     }
 }
 
-fn parse_args_with_default<T>(arguments: Option<Value>) -> Result<T, FunctionCallError>
+fn parse_args_with_default<T>(
+    tool_name: &str,
+    arguments: Option<Value>,
+) -> Result<T, FunctionCallError>
 where
     T: DeserializeOwned + Default,
 {
     match arguments {
-        Some(value) => parse_args(Some(value)),
+        Some(value) => parse_args(tool_name, Some(value)),
         None => Ok(T::default()),
     }
 }

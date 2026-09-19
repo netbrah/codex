@@ -1,5 +1,6 @@
 pub(crate) mod apply_patch;
 pub(crate) mod apply_patch_spec;
+mod args_parse;
 mod current_time;
 mod dynamic;
 pub(crate) mod extension_tools;
@@ -56,6 +57,7 @@ pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
 pub use apply_patch::FunctionApplyPatchHandler;
+pub(crate) use args_parse::parse_arguments;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use current_time::CurrentTimeHandler;
@@ -82,15 +84,6 @@ pub use unified_exec::WriteStdinHandler;
 pub use view_image::ViewImageHandler;
 pub(crate) use wait_for_environment::WaitForEnvironmentHandler;
 pub use wait_for_environment::WaitForEnvironmentToolConfig;
-
-pub(crate) fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    serde_json::from_str(arguments).map_err(|err| {
-        FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
-    })
-}
 
 fn resolve_sandbox_permissions(
     sandbox_permissions: Option<SandboxPermissions>,
@@ -121,7 +114,7 @@ fn rewrite_function_arguments(
     tool_name: &str,
     rewrite: impl FnOnce(&mut Map<String, Value>),
 ) -> Result<String, FunctionCallError> {
-    let mut arguments: Value = parse_arguments(arguments)?;
+    let mut arguments: Value = parse_arguments(tool_name, arguments)?;
     let Value::Object(arguments) = &mut arguments else {
         return Err(FunctionCallError::RespondToModel(format!(
             "{tool_name} arguments must be an object"
@@ -147,6 +140,7 @@ fn rewrite_function_string_argument(
 }
 
 fn parse_arguments_with_base_path<T>(
+    tool_name: &str,
     arguments: &str,
     base_path: &AbsolutePathBuf,
 ) -> Result<T, FunctionCallError>
@@ -154,7 +148,7 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let _guard = AbsolutePathBufGuard::new(base_path);
-    parse_arguments(arguments)
+    parse_arguments(tool_name, arguments)
 }
 
 fn resolve_tool_environment<'a>(

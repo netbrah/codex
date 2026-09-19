@@ -122,7 +122,8 @@ impl RequestPluginInstallHandler {
 
         let (requested_tool_id, requested_tool_type, suggest_reason) = match self.presentation {
             ToolSuggestPresentation::ListTool => {
-                let args: RequestPluginInstallArgs = parse_arguments(&arguments)?;
+                let args: RequestPluginInstallArgs =
+                    parse_arguments(REQUEST_PLUGIN_INSTALL_TOOL_NAME, &arguments)?;
                 if args.action_type != DiscoverableToolAction::Install {
                     return Err(FunctionCallError::RespondToModel(
                         "plugin install requests currently support only action_type=\"install\""
@@ -132,7 +133,8 @@ impl RequestPluginInstallHandler {
                 (args.tool_id, Some(args.tool_type), args.suggest_reason)
             }
             ToolSuggestPresentation::RecommendationContext => {
-                let args: RecommendedPluginInstallArgs = parse_arguments(&arguments)?;
+                let args: RecommendedPluginInstallArgs =
+                    parse_arguments(REQUEST_PLUGIN_INSTALL_TOOL_NAME, &arguments)?;
                 (args.plugin_id, None, args.suggest_reason)
             }
         };

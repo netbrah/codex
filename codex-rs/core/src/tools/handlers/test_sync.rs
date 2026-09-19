@@ -101,7 +101,7 @@ impl TestSyncHandler {
             }
         };
 
-        let args: TestSyncArgs = parse_arguments(&arguments)?;
+        let args: TestSyncArgs = parse_arguments("test_sync_tool", &arguments)?;
 
         if let Some(delay) = args.sleep_before_ms
             && delay > 0

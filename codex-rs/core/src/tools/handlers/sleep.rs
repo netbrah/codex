@@ -94,7 +94,7 @@ impl ToolExecutor<ToolInvocation> for SleepHandler {
                     "{TOOL_NAME} handler received unsupported payload"
                 )));
             };
-            let args: SleepArgs = parse_arguments(&arguments)?;
+            let args: SleepArgs = parse_arguments(TOOL_NAME, &arguments)?;
             if !(1..=MAX_SLEEP_DURATION_MS).contains(&args.duration_ms) {
                 return Err(FunctionCallError::RespondToModel(format!(
                     "duration_ms must be between 1 and {MAX_SLEEP_DURATION_MS}"

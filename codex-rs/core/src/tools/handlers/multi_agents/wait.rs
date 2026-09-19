@@ -65,7 +65,7 @@ impl Handler {
             ..
         } = invocation;
         let arguments = function_arguments(payload)?;
-        let args: WaitArgs = parse_arguments(&arguments)?;
+        let args: WaitArgs = parse_arguments("wait_agent", &arguments)?;
         let receiver_thread_ids = parse_agent_id_targets(args.targets)?;
         let mut receiver_agents = Vec::with_capacity(receiver_thread_ids.len());
         let mut target_by_thread_id = HashMap::with_capacity(receiver_thread_ids.len());

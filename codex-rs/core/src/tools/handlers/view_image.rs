@@ -129,7 +129,7 @@ impl ViewImageHandler {
             path,
             environment_id,
             detail,
-        } = parse_arguments(&arguments)?;
+        } = parse_arguments("view_image", &arguments)?;
         // Keep accepting previously supported detail hints after they disappear from the schema.
         let detail = match detail.as_deref() {
             None => None,

@@ -91,7 +91,7 @@ impl ToolExecutor<ToolInvocation> for RequestUserInputAsyncHandler {
                     "{TOOL_NAME} handler received unsupported payload"
                 )));
             };
-            let args: RequestUserInputAsyncArgs = parse_arguments(&arguments)?;
+            let args: RequestUserInputAsyncArgs = parse_arguments(TOOL_NAME, &arguments)?;
             if args.questions.is_empty() {
                 return Err(FunctionCallError::RespondToModel(
                     "questions must not be empty".to_string(),

@@ -77,7 +77,8 @@ impl RequestUserInputHandler {
             return Err(FunctionCallError::RespondToModel(message));
         }
 
-        let args: RequestUserInputToolArgs = parse_arguments(&arguments)?;
+        let args: RequestUserInputToolArgs =
+            parse_arguments(REQUEST_USER_INPUT_TOOL_NAME, &arguments)?;
         let args = normalize_request_user_input_tool_args(args)
             .map_err(FunctionCallError::RespondToModel)?;
         let args = RequestUserInputArgs {

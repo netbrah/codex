@@ -50,7 +50,7 @@ impl Handler {
             ..
         } = invocation;
         let arguments = function_arguments(payload)?;
-        let args: WaitArgs = parse_arguments(&arguments)?;
+        let args: WaitArgs = parse_arguments("wait_agent", &arguments)?;
         let min_timeout_ms = turn.config.multi_agent_v2.min_wait_timeout_ms;
         let max_timeout_ms = turn.config.multi_agent_v2.max_wait_timeout_ms;
         let default_timeout_ms = turn.config.multi_agent_v2.default_wait_timeout_ms;

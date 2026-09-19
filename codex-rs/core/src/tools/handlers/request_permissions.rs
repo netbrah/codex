@@ -67,7 +67,8 @@ impl RequestPermissionsHandler {
             }
         };
 
-        let environment_args: RequestPermissionsEnvironmentArgs = parse_arguments(&arguments)?;
+        let environment_args: RequestPermissionsEnvironmentArgs =
+            parse_arguments("request_permissions", &arguments)?;
         let Some(turn_environment) = resolve_tool_environment(
             &step_context.environments,
             environment_args.environment_id.as_deref(),
@@ -84,12 +85,12 @@ impl RequestPermissionsHandler {
                 "request_permissions requires an executor cwd".to_string(),
             )
         })?;
-        let mut arguments: Value = parse_arguments(&arguments)?;
+        let mut arguments: Value = parse_arguments("request_permissions", &arguments)?;
         resolve_permission_path_strings(&mut arguments, &context)?;
         let mut args: RequestPermissionsArgs =
             serde_json::from_value(arguments).map_err(|err| {
                 FunctionCallError::RespondToModel(format!(
-                    "failed to parse function arguments: {err}"
+                    "failed to parse arguments for request_permissions: {err}"
                 ))
             })?;
         args.permissions =

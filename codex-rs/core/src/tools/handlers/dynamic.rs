@@ -135,7 +135,7 @@ impl DynamicToolHandler {
             }
         };
 
-        let args: Value = parse_arguments(&arguments)?;
+        let args: Value = parse_arguments(self.tool_name.name.as_str(), &arguments)?;
         let response = request_dynamic_tool(
             &session,
             turn.as_ref(),

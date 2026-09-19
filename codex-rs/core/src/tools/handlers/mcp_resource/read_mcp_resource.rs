@@ -65,8 +65,8 @@ impl ReadMcpResourceHandler {
             }
         };
 
-        let arguments = parse_arguments(arguments.as_str())?;
-        let args: ReadResourceArgs = parse_args(arguments.clone())?;
+        let arguments = parse_arguments("read_mcp_resource", arguments.as_str())?;
+        let args: ReadResourceArgs = parse_args("read_mcp_resource", arguments.clone())?;
         let ReadResourceArgs { server, uri } = args;
         let server = normalize_required_string("server", server)?;
         let uri = normalize_required_string("uri", uri)?;

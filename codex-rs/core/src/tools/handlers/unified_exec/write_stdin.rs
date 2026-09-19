@@ -85,7 +85,7 @@ impl WriteStdinHandler {
             }
         };
 
-        let args: WriteStdinArgs = parse_arguments(&arguments)?;
+        let args: WriteStdinArgs = parse_arguments("write_stdin", &arguments)?;
         let context =
             UnifiedExecContext::new(session.clone(), step_context, cancellation_token, call_id);
         let response = session

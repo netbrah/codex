@@ -183,7 +183,8 @@ impl ExecCommandHandler {
             cancellation_token,
             call_id.clone(),
         );
-        let environment_args: ExecCommandEnvironmentArgs = parse_arguments(&arguments)?;
+        let environment_args: ExecCommandEnvironmentArgs =
+            parse_arguments("exec_command", &arguments)?;
         let Some(turn_environment) = resolve_tool_environment(
             &step_context.environments,
             environment_args.environment_id.as_deref(),
@@ -233,12 +234,12 @@ impl ExecCommandHandler {
         let mut args: ExecCommandArgs = match native_cwd.as_ref() {
             Some(native_cwd) => {
                 // The base path only resolves paths nested in the permissions config types.
-                parse_arguments_with_base_path(&arguments, native_cwd)?
+                parse_arguments_with_base_path("exec_command", &arguments, native_cwd)?
             }
             None => {
                 // Foreign executor cwd values cannot seed this host's AbsolutePathBufGuard.
                 // Sandbox intent and URI-native roots are still sent to the executor.
-                parse_arguments(&arguments)?
+                parse_arguments("exec_command", &arguments)?
             }
         };
         if args.tty && !session.features().enabled(Feature::UnifiedExecTty) {
@@ -524,7 +525,7 @@ impl CoreToolRuntime for ExecCommandHandler {
             return None;
         };
 
-        parse_arguments::<ExecCommandArgs>(arguments)
+        parse_arguments::<ExecCommandArgs>("exec_command", arguments)
             .ok()
             .map(|args| PreToolUsePayload {
                 tool_name: HookToolName::bash(),

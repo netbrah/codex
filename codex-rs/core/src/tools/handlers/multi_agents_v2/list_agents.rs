@@ -40,7 +40,7 @@ impl Handler {
             ..
         } = invocation;
         let arguments = function_arguments(payload)?;
-        let args: ListAgentsArgs = parse_arguments(&arguments)?;
+        let args: ListAgentsArgs = parse_arguments("list_agents", &arguments)?;
         session
             .services
             .agent_control

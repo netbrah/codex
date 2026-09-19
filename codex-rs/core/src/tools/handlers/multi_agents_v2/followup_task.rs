@@ -37,7 +37,7 @@ impl Handler {
         analytics: &mut ToolCallAnalytics,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let arguments = function_arguments(invocation.payload.clone())?;
-        let args: FollowupTaskArgs = parse_arguments(&arguments)?;
+        let args: FollowupTaskArgs = parse_arguments("followup_task", &arguments)?;
         handle_message_string_tool(
             invocation,
             MessageDeliveryMode::TriggerTurn,

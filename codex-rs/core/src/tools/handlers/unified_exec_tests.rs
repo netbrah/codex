@@ -50,7 +50,7 @@ async fn invocation_for_payload(
 fn test_get_command_uses_default_shell_when_unspecified() -> anyhow::Result<()> {
     let json = r#"{"cmd": "echo hello"}"#;
 
-    let args: ExecCommandArgs = parse_arguments(json)?;
+    let args: ExecCommandArgs = parse_arguments("exec_command", json)?;
 
     assert!(args.shell.is_none());
 
@@ -72,7 +72,7 @@ fn test_get_command_uses_default_shell_when_unspecified() -> anyhow::Result<()> 
 fn test_get_command_respects_explicit_bash_shell() -> anyhow::Result<()> {
     let json = r#"{"cmd": "echo hello", "shell": "/bin/bash"}"#;
 
-    let args: ExecCommandArgs = parse_arguments(json)?;
+    let args: ExecCommandArgs = parse_arguments("exec_command", json)?;
 
     assert_eq!(args.shell.as_deref(), Some("/bin/bash"));
 
@@ -110,7 +110,7 @@ fn test_get_command_resolves_powershell_by_type() -> anyhow::Result<()> {
     })
     .to_string();
 
-    let args: ExecCommandArgs = parse_arguments(&json)?;
+    let args: ExecCommandArgs = parse_arguments("exec_command", &json)?;
 
     assert_eq!(
         args.shell.as_deref(),
@@ -138,7 +138,7 @@ fn test_get_command_resolves_powershell_by_type() -> anyhow::Result<()> {
 fn test_get_command_respects_explicit_cmd_shell() -> anyhow::Result<()> {
     let json = r#"{"cmd": "echo hello", "shell": "cmd"}"#;
 
-    let args: ExecCommandArgs = parse_arguments(json)?;
+    let args: ExecCommandArgs = parse_arguments("exec_command", json)?;
 
     assert_eq!(args.shell.as_deref(), Some("cmd"));
 
@@ -159,7 +159,7 @@ fn test_get_command_respects_explicit_cmd_shell() -> anyhow::Result<()> {
 fn test_get_command_rejects_explicit_login_when_disallowed() -> anyhow::Result<()> {
     let json = r#"{"cmd": "echo hello", "login": true}"#;
 
-    let args: ExecCommandArgs = parse_arguments(json)?;
+    let args: ExecCommandArgs = parse_arguments("exec_command", json)?;
     let err = get_command(
         &args,
         Arc::new(default_user_shell()),
@@ -218,7 +218,7 @@ async fn exec_command_rejects_login_when_selected_environment_disallows_it() {
 #[test]
 fn test_get_command_rejects_explicit_shell_in_zsh_fork_mode() -> anyhow::Result<()> {
     let json = r#"{"cmd": "echo hello", "shell": "/bin/bash"}"#;
-    let args: ExecCommandArgs = parse_arguments(json)?;
+    let args: ExecCommandArgs = parse_arguments("exec_command", json)?;
     let shell_zsh_path = AbsolutePathBuf::from_absolute_path(if cfg!(windows) {
         r"C:\opt\codex\zsh"
     } else {

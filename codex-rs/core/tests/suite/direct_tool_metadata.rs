@@ -284,7 +284,7 @@ async fn direct_function_and_tool_search_mark_complete_attempts(
         malformed_output["output"]
             .as_str()
             .expect("parse error output")
-            .starts_with("failed to parse function arguments:"),
+            .starts_with("failed to parse arguments for update_plan:"),
     );
     assert_eq!(search_output["execution"], json!("client"));
 

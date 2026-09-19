@@ -1766,7 +1766,7 @@ async fn multi_agent_v2_send_message_rejects_interrupt_parameter() {
         panic!("expected model-facing parse error");
     };
     assert!(message.starts_with(
-        "failed to parse function arguments: unknown field `interrupt`, expected `target` or `message`"
+        "failed to parse arguments for send_message: unknown field `interrupt`, expected `target` or `message`"
     ));
 
     let ops = manager.captured_ops();

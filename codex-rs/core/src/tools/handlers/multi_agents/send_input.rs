@@ -43,7 +43,7 @@ impl Handler {
             ..
         } = invocation;
         let arguments = function_arguments(payload)?;
-        let args: SendInputArgs = parse_arguments(&arguments)?;
+        let args: SendInputArgs = parse_arguments("send_input", &arguments)?;
         let receiver_thread_id = parse_agent_id_target(&args.target)?;
         let input_items = parse_collab_input(args.message, args.items)?;
         let prompt = render_input_preview(&input_items);

@@ -116,7 +116,7 @@ async fn handle_spawn_agent(
     } = invocation;
     let turn = &step_context.turn;
     let arguments = function_arguments(payload)?;
-    let args: SpawnAgentArgs = parse_arguments(&arguments)?;
+    let args: SpawnAgentArgs = parse_arguments("spawn_agent", &arguments)?;
     let fork_mode = args.fork_mode()?;
     let message = message_content(args.message)?;
     let role_name = args
