@@ -11794,6 +11794,54 @@ max_concurrent_threads_per_session = 9
     Ok(())
 }
 
+/// T4 (apex-xt2.9 item 3, spec §6.3/§7.3): a profile-layer
+/// `[features.multi_agent_v2]` table WITHOUT an `enabled` key merges cleanly
+/// with the CLI `--enable multi_agent_v2` (the raw override
+/// `features.multi_agent_v2 = true`, cf. `FeatureToggles::to_overrides` in
+/// `cli/src/main.rs`): the feature is enabled AND the profile-layer fields
+/// survive. The merge goes through the structured-feature path
+/// (`is_structured_feature_path` in codex-config inserts `enabled` into the
+/// table instead of replacing it).
+///
+/// Fixture: profile-v2 selected via `LoaderOverrides` (profile file
+/// `$CODEX_HOME/onprem.config.toml` written directly, mirroring the CLI `-p`
+/// wiring); no base `config.toml` (missing user layer = empty table), no
+/// managed config.
+#[tokio::test]
+async fn multi_agent_v2_profile_layer_merges_with_cli_enable_override() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let profile_config = codex_home.path().join("onprem.config.toml");
+    std::fs::write(
+        &profile_config,
+        r#"[features.multi_agent_v2]
+multi_agent_mode_hint_text = "On-prem delegation guidance."
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .loader_overrides(LoaderOverrides {
+            user_config_path: Some(profile_config.abs()),
+            user_config_profile: Some("onprem".parse().expect("profile-v2 name")),
+            ..LoaderOverrides::without_managed_config_for_tests()
+        })
+        .cli_overrides(vec![(
+            "features.multi_agent_v2".to_string(),
+            TomlValue::Boolean(true),
+        )])
+        .build()
+        .await?;
+
+    assert!(config.features.enabled(Feature::MultiAgentV2));
+    assert_eq!(
+        config.multi_agent_v2.multi_agent_mode_hint_text.as_deref(),
+        Some("On-prem delegation guidance.")
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn multi_agent_v2_default_session_thread_cap_counts_root() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
