@@ -354,7 +354,7 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
     assert_eq!(name, "followup_task");
     assert_eq!(
         description,
-        "Send a follow-up task to an existing non-root target agent and trigger a turn if it is idle. If the target is already running, deliver the task promptly at message boundaries while sampling, or after the pending tool call completes."
+        "Send a follow-up task to an existing non-root target agent and trigger a turn if it is idle. If the target is already running, deliver the task promptly at message boundaries while sampling, or after the pending tool call completes. It cannot change the target's model or reasoning settings; spawn a new agent for those."
     );
     assert_eq!(
         parameters.schema_type,
@@ -473,4 +473,51 @@ fn list_agents_tool_status_schema_includes_interrupted() {
             "not_found"
         ])
     );
+}
+
+#[test]
+fn v2_tool_descriptions_carry_ratchet_c_negative_guidance() {
+    let ToolSpec::Function(wait_v2) = create_wait_agent_tool_v2(WaitAgentTimeoutOptions {
+        default_timeout_ms: 30_000,
+        min_timeout_ms: 10_000,
+        max_timeout_ms: 3_600_000,
+    }) else {
+        panic!("wait_agent v2 should be a function tool");
+    };
+    assert!(wait_v2
+        .description
+        .contains("It takes no target: the wait is over all live agents. To address a specific agent use send_message or followup_task with its task name."));
+
+    let mut legacy = model_preset("legacy", /*show_in_picker*/ true);
+    legacy.multi_agent_version = Some(MultiAgentVersion::V1);
+    let mut disabled = model_preset("disabled", /*show_in_picker*/ true);
+    disabled.multi_agent_version = Some(MultiAgentVersion::Disabled);
+    let ToolSpec::Function(spawn_v2) = create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+        available_models: vec![
+            model_preset("visible", /*show_in_picker*/ true),
+            model_preset("hidden", /*show_in_picker*/ false),
+            legacy,
+            disabled,
+        ],
+        agent_type_description: "role help".to_string(),
+        expose_agent_type: true,
+        hide_agent_type_model_reasoning: false,
+        expose_spawn_agent_model_overrides: true,
+        multi_agent_version: MultiAgentVersion::V2,
+        usage_hint_text: None,
+    }) else {
+        panic!("spawn_agent v2 should be a function tool");
+    };
+    assert!(
+        spawn_v2
+            .description
+            .contains("There is no agent_name parameter; the agent is addressed by task_name.")
+    );
+
+    let ToolSpec::Function(followup) = create_followup_task_tool() else {
+        panic!("followup_task should be a function tool");
+    };
+    assert!(followup.description.contains(
+        "It cannot change the target's model or reasoning settings; spawn a new agent for those."
+    ));
 }
