@@ -62,3 +62,13 @@ fn write_stdin_args_coerces_string_integers() {
         );
     }
 }
+
+#[test]
+fn write_stdin_args_rejects_unknown_field() {
+    let err = serde_json::from_str::<WriteStdinArgs>(r#"{"session_id":1,"bogus":1}"#)
+        .expect_err("unknown fields must be rejected");
+    assert!(
+        err.to_string().contains("unknown field `bogus`"),
+        "unknown field error should name the field, got: {err}"
+    );
+}

@@ -94,6 +94,82 @@ fn request_plugin_install_does_not_support_parallel_tool_calls() {
 }
 
 #[tokio::test]
+async fn request_plugin_install_recommended_context_accepts_tool_id_alias() {
+    let (session, turn) = make_session_and_context().await;
+    let turn = Arc::new(turn);
+    let result = RequestPluginInstallHandler::new(
+        Vec::new(),
+        ToolSuggestPresentation::RecommendationContext,
+    )
+    .handle(ToolInvocation {
+        session: Arc::new(session),
+        step_context: StepContext::for_test(Arc::clone(&turn)),
+        turn: Arc::clone(&turn),
+        cancellation_token: tokio_util::sync::CancellationToken::new(),
+        tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+        call_id: "call-alias".to_string(),
+        tool_name: codex_tools::ToolName::plain(REQUEST_PLUGIN_INSTALL_TOOL_NAME),
+        source: crate::tools::context::ToolCallSource::Direct,
+        payload: ToolPayload::Function {
+            arguments: json!({
+                "tool_id": "google-calendar@openai-curated-remote",
+                "suggest_reason": ""
+            })
+            .to_string(),
+        },
+    })
+    .await;
+
+    // The parse must consume the `tool_id` alias; the failure then comes
+    // from post-parse validation, proving parsing succeeded.
+    let Err(FunctionCallError::RespondToModel(message)) = result else {
+        panic!("empty suggest_reason should fail after parsing");
+    };
+    assert_eq!(message, "suggest_reason must not be empty");
+}
+
+#[tokio::test]
+async fn request_plugin_install_recommended_context_rejects_unknown_field() {
+    let (session, turn) = make_session_and_context().await;
+    let turn = Arc::new(turn);
+    let result = RequestPluginInstallHandler::new(
+        Vec::new(),
+        ToolSuggestPresentation::RecommendationContext,
+    )
+    .handle(ToolInvocation {
+        session: Arc::new(session),
+        step_context: StepContext::for_test(Arc::clone(&turn)),
+        turn: Arc::clone(&turn),
+        cancellation_token: tokio_util::sync::CancellationToken::new(),
+        tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+        call_id: "call-unknown".to_string(),
+        tool_name: codex_tools::ToolName::plain(REQUEST_PLUGIN_INSTALL_TOOL_NAME),
+        source: crate::tools::context::ToolCallSource::Direct,
+        payload: ToolPayload::Function {
+            arguments: json!({
+                "plugin_id": "google-calendar@openai-curated-remote",
+                "suggest_reason": "Read the calendar for this request",
+                "bogus": 1
+            })
+            .to_string(),
+        },
+    })
+    .await;
+
+    let Err(FunctionCallError::RespondToModel(message)) = result else {
+        panic!("unknown fields must be rejected at parse time");
+    };
+    assert!(
+        message.contains("failed to parse arguments for request_plugin_install"),
+        "parse error should name the tool, got: {message}"
+    );
+    assert!(
+        message.contains("unknown field `bogus`"),
+        "parse error should name the unknown field, got: {message}"
+    );
+}
+
+#[tokio::test]
 async fn verified_plugin_install_completed_requires_installed_plugin() {
     let codex_home = tempdir().expect("tempdir should succeed");
     let curated_root = curated_plugins_repo_path(codex_home.path());
@@ -152,8 +228,6 @@ fn recommended_plugin_install_args_accept_legacy_tool_id() {
     }))
     .expect("current arguments should deserialize");
     let legacy: RecommendedPluginInstallArgs = serde_json::from_value(json!({
-        "tool_type": "plugin",
-        "action_type": "install",
         "tool_id": "google-drive@openai-curated-remote",
         "suggest_reason": "Use Google Drive for this request"
     }))

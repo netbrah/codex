@@ -221,6 +221,7 @@ impl CoreToolRuntime for Handler {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SpawnAgentArgs {
     message: Option<String>,
     items: Option<Vec<UserInput>>,

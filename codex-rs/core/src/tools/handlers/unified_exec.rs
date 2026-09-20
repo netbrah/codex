@@ -28,6 +28,7 @@ pub(crate) use exec_command::ExecCommandHandlerOptions;
 pub use write_stdin::WriteStdinHandler;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ExecCommandArgs {
     pub(crate) cmd: String,
     #[serde(default)]
@@ -53,6 +54,17 @@ pub(crate) struct ExecCommandArgs {
     justification: Option<String>,
     #[serde(default)]
     prefix_rule: Option<Vec<String>>,
+    // The handler reads these environment values from the shadow parse
+    // (ExecCommandEnvironmentArgs) above, as today. The folded fields exist
+    // only so `deny_unknown_fields` recognizes the schema-legal fields
+    // `workdir` and `environment_id`; the workspace lints (`rust = {}`
+    // default-warn) would otherwise flag them as never read.
+    #[serde(default)]
+    #[allow(dead_code)]
+    workdir: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    environment_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

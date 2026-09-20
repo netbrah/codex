@@ -56,6 +56,7 @@ const VIEW_IMAGE_INVALID_MESSAGE: &str =
     "unable to process image: invalid or unsupported image data";
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ViewImageArgs {
     path: String,
     #[serde(default)]

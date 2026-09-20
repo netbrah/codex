@@ -65,3 +65,13 @@ fn exec_wait_args_coerces_string_integers() {
         );
     }
 }
+
+#[test]
+fn exec_wait_args_rejects_unknown_field() {
+    let err = serde_json::from_str::<ExecWaitArgs>(r#"{"cell_id":"cell-1","bogus":1}"#)
+        .expect_err("unknown fields must be rejected");
+    assert!(
+        err.to_string().contains("unknown field `bogus`"),
+        "unknown field error should name the field, got: {err}"
+    );
+}

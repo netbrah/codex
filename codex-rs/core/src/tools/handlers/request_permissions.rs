@@ -212,3 +212,7 @@ fn resolve_permission_path_string(
     *value = Value::String(path.into_string());
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "request_permissions_tests.rs"]
+mod tests;

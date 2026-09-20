@@ -26,6 +26,7 @@ use super::wait_spec::create_wait_tool;
 pub struct CodeModeWaitHandler;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExecWaitArgs {
     cell_id: String,
     #[serde(

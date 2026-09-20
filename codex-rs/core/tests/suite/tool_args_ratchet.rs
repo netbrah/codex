@@ -634,3 +634,48 @@ async fn ratchet_b_wait_agent_unknown_field_names_tool_and_parameter() -> Result
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ratchet_d_exec_command_unknown_field_names_tool_and_field() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call("exec-d", "exec_command", r#"{"command":"true"}"#),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-2", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_model("gpt-5.4")
+        .build_with_auto_env(&server)
+        .await?;
+
+    test.submit_turn("run a command").await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output = requests[1]
+        .function_call_output_text("exec-d")
+        .expect("exec_command should produce function call output");
+    assert!(
+        output.contains("failed to parse arguments for exec_command"),
+        "parse error should name the tool, got: {output}"
+    );
+    assert!(
+        output.contains("unknown field `command`"),
+        "parse error should name the unknown field, got: {output}"
+    );
+
+    Ok(())
+}

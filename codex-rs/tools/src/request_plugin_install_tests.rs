@@ -208,3 +208,24 @@ fn all_requested_connectors_picked_up_requires_every_expected_connector() {
         &accessible_connectors,
     ));
 }
+
+#[test]
+fn request_plugin_install_args_parses_known_payload_and_rejects_unknown_field() {
+    let args: RequestPluginInstallArgs = serde_json::from_str(
+        r#"{"tool_type":"connector","action_type":"install","tool_id":"connector_1","suggest_reason":"Read the calendar"}"#,
+    )
+    .expect("known fields should parse");
+    assert_eq!(args.tool_type, DiscoverableToolType::Connector);
+    assert_eq!(args.action_type, DiscoverableToolAction::Install);
+    assert_eq!(args.tool_id, "connector_1");
+    assert_eq!(args.suggest_reason, "Read the calendar");
+
+    let err = serde_json::from_str::<RequestPluginInstallArgs>(
+        r#"{"tool_type":"connector","action_type":"install","tool_id":"connector_1","suggest_reason":"Read the calendar","bogus":1}"#,
+    )
+    .expect_err("unknown fields must be rejected");
+    assert!(
+        err.to_string().contains("unknown field `bogus`"),
+        "unknown field error should name the field, got: {err}"
+    );
+}

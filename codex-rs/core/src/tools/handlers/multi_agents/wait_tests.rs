@@ -58,3 +58,13 @@ fn wait_agent_v1_args_coerces_string_integers() {
         );
     }
 }
+
+#[test]
+fn wait_agent_v1_args_rejects_unknown_field() {
+    let err = serde_json::from_str::<WaitArgs>(r#"{"targets":["a"],"bogus":1}"#)
+        .expect_err("unknown fields must be rejected");
+    assert!(
+        err.to_string().contains("unknown field `bogus`"),
+        "unknown field error should name the field, got: {err}"
+    );
+}

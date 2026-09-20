@@ -60,6 +60,7 @@ fn ensure_model_can_access_mcp_server(
 }
 
 #[derive(Debug, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 struct ListResourceArgs {
     #[serde(default)]
     server: Option<String>,
@@ -97,6 +98,7 @@ impl ListResourceArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ReadResourceArgs {
     server: String,
     uri: String,

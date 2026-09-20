@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 pub const REQUEST_USER_INPUT_TOOL_NAME: &str = "request_user_input";
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RequestUserInputToolArgs {
     pub questions: Vec<RequestUserInputQuestion>,
 }

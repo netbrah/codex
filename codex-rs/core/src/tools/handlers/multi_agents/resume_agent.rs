@@ -162,6 +162,7 @@ impl CoreToolRuntime for Handler {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResumeAgentArgs {
     id: String,
 }

@@ -36,6 +36,7 @@ struct BarrierState {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BarrierArgs {
     id: String,
     #[serde(deserialize_with = "strict_usize")]
@@ -45,6 +46,7 @@ struct BarrierArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TestSyncArgs {
     #[serde(default, deserialize_with = "strict_u64_opt")]
     sleep_before_ms: Option<u64>,

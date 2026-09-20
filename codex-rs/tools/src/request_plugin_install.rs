@@ -13,6 +13,7 @@ pub const REQUEST_PLUGIN_INSTALL_PERSIST_KEY: &str = "persist";
 pub const REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE: &str = "always";
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RequestPluginInstallArgs {
     pub tool_type: DiscoverableToolType,
     pub action_type: DiscoverableToolAction,

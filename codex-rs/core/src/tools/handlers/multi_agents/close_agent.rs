@@ -162,6 +162,7 @@ impl ToolOutput for CloseAgentResult {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CloseAgentArgs {
     target: String,
 }

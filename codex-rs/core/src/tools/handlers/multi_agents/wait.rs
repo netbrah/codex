@@ -275,6 +275,7 @@ impl CoreToolRuntime for Handler {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WaitArgs {
     #[serde(default)]
     targets: Vec<String>,

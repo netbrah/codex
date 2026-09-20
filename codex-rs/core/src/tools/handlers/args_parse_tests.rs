@@ -153,8 +153,15 @@ fn nearest_key_whitespace_before_colon_at_boundary_does_not_qualify() {
 
 #[test]
 fn nearest_key_peek_asymmetry_absorbed_by_backward_scan() {
-    // Peek-based errors (invalid number) report the byte before the peeked
-    // byte (here: the digit `1` in `1x`), one column short of `x`.
+    // Under vendored serde_json 1.0.149 the direct `peek_error` this input
+    // raises (after the number `1`, expected `,` or `}`) reports the peeked
+    // byte's own 1-based column (7 for `x`); the one-short class is the
+    // `position()`/`fix_position` path — unpositioned errors such as `["x"]`
+    // parsed as u32 (pinned to column 0 by
+    // shape1_no_key_before_error_gives_no_hint) are located at the byte
+    // before the peeked one. This test deliberately feeds the scan that
+    // one-short column (6, the digit `1`) to pin the scan absorbing the
+    // asymmetry and still resolving the enclosing key `a`.
     assert_eq!(
         nearest_json_key_before(r#"{"a":1x}"#, 1, 6),
         Some("a".to_string())

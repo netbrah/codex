@@ -46,6 +46,7 @@ use crate::tools::registry::ToolExecutor;
 use crate::tools::router::ToolSuggestPresentation;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 struct RecommendedPluginInstallArgs {
     #[serde(alias = "tool_id")]
     plugin_id: String,

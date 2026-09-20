@@ -624,7 +624,6 @@ async fn subagent_start_replaces_session_start_and_injects_context(
     let expected_agent_type = agent_type.unwrap_or("default");
     let spawn_args = serde_json::to_string(&json!({
         "message": CHILD_PROMPT,
-        "task_name": "child",
         "agent_type": agent_type,
         "fork_context": fork_context,
     }))?;
@@ -760,7 +759,6 @@ async fn subagent_stop_replaces_stop_and_skips_internal_subagents() -> Result<()
     let server = start_mock_server().await;
     let spawn_args = serde_json::to_string(&json!({
         "message": CHILD_PROMPT,
-        "task_name": "child",
         "agent_type": "worker",
     }))?;
 

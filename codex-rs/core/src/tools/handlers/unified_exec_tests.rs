@@ -677,3 +677,153 @@ fn exec_command_args_coerces_string_integers() {
         );
     }
 }
+
+#[test]
+fn exec_command_args_rejects_unknown_field() {
+    let err =
+        parse_arguments::<ExecCommandArgs>("exec_command", r#"{"cmd":"echo hi","command":"true"}"#)
+            .expect_err("unknown fields must be rejected");
+    let FunctionCallError::RespondToModel(message) = err else {
+        panic!("expected a RespondToModel parse error, got: {err:?}");
+    };
+    assert!(
+        message.contains("failed to parse arguments for exec_command"),
+        "parse error should name the tool, got: {message}"
+    );
+    assert!(
+        message.contains("unknown field `command`"),
+        "parse error should name the unknown field, got: {message}"
+    );
+}
+
+#[test]
+fn exec_command_args_accepts_folded_environment_fields() {
+    let args: ExecCommandArgs = parse_arguments(
+        "exec_command",
+        r#"{"cmd":"echo hi","workdir":"sub","environment_id":"env-1"}"#,
+    )
+    .expect("schema-legal environment fields must parse");
+    assert_eq!(args.workdir.as_deref(), Some("sub"));
+    assert_eq!(args.environment_id.as_deref(), Some("env-1"));
+}
+
+#[tokio::test]
+async fn exec_command_unavailable_environment_precedes_parse_error() {
+    let (session, mut turn) = make_session_and_context().await;
+    // Make the primary environment non-Ready so the unavailable guard is
+    // reachable. A direct handle() call bypasses tool registration, which a
+    // suite session with no Ready environment skips entirely ("unsupported
+    // call"), so this unit route pins the same handler ordering
+    // deterministically.
+    let selection = match &turn.environments.environments[0] {
+        TurnEnvironmentState::Ready(environment) => environment.selection.clone(),
+        _ => panic!("primary environment should be ready"),
+    };
+    turn.environments.environments[0] = TurnEnvironmentState::Failed {
+        selection,
+        error: "test environment failure".to_string(),
+    };
+    let turn = Arc::new(turn);
+
+    let response = ExecCommandHandler::default()
+        .handle(ToolInvocation {
+            session: Arc::new(session),
+            step_context: StepContext::for_test(Arc::clone(&turn)),
+            turn,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
+            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+            call_id: "unavailable-order".to_string(),
+            tool_name: codex_tools::ToolName::plain("exec_command"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                // Malformed non-env field: if the main parse ran first, this
+                // would be a type error, not the unavailable message.
+                arguments: r#"{"cmd":123}"#.to_string(),
+            },
+        })
+        .await;
+
+    let Err(FunctionCallError::RespondToModel(message)) = response else {
+        panic!("malformed command in an unavailable environment should error");
+    };
+    assert_eq!(message, "unified exec is unavailable in this session");
+}
+
+#[test]
+fn exec_command_environment_args_stays_tolerant_projection() {
+    let args: ExecCommandEnvironmentArgs = parse_arguments(
+        "exec_command",
+        r#"{"workdir":"sub","environment_id":"env-1","cmd":"echo hi","command":"true"}"#,
+    )
+    .expect("the environment pre-parse must stay a tolerant projection");
+    assert_eq!(args.workdir.as_deref(), Some("sub"));
+    assert_eq!(args.environment_id.as_deref(), Some("env-1"));
+}
+
+#[test]
+fn exec_command_interactive_numeric_timeout_ms_still_parses() {
+    // deny_unknown_fields is struct-relative, not schema-relative: the
+    // struct-declared timeout_ms keeps parsing even though the interactive
+    // schema omits it.
+    let args: ExecCommandArgs =
+        parse_arguments("exec_command", r#"{"cmd":"echo hi","timeout_ms":30000}"#)
+            .expect("struct-declared timeout_ms must parse for interactive payloads");
+    assert_eq!(args.timeout_ms, Some(30000));
+}
+
+#[test]
+fn exec_command_one_shot_numeric_tty_and_yield_still_parse() {
+    // deny_unknown_fields is struct-relative: one-shot payloads keep
+    // parsing the struct-declared tty/yield_time_ms even though the
+    // one-shot schema removes them.
+    let args: ExecCommandArgs = parse_arguments(
+        "exec_command",
+        r#"{"cmd":"echo hi","tty":false,"yield_time_ms":250}"#,
+    )
+    .expect("struct-declared tty/yield_time_ms must parse for one-shot payloads");
+    assert!(!args.tty);
+    assert_eq!(args.yield_time_ms, 250);
+}
+
+#[test]
+fn exec_command_spec_pins_schema_omitted_fields() {
+    use codex_tools::ToolSpec;
+    let options = ExecCommandHandlerOptions {
+        allow_login_shell: false,
+        allow_tty: true,
+        exec_permission_approvals_enabled: false,
+        include_environment_id: false,
+        include_shell_parameter: true,
+        include_windows_shell_guidance: cfg!(windows),
+    };
+    let ToolSpec::Function(spec) = ExecCommandHandler::new(options).spec() else {
+        panic!("exec_command must expose a function schema");
+    };
+    let interactive = spec
+        .parameters
+        .properties
+        .expect("interactive schema must carry properties");
+    assert!(interactive.contains_key("tty"));
+    assert!(interactive.contains_key("yield_time_ms"));
+    assert!(
+        !interactive.contains_key("timeout_ms"),
+        "interactive schema must omit timeout_ms"
+    );
+
+    let ToolSpec::Function(spec) = ExecCommandHandler::one_shot(options).spec() else {
+        panic!("one-shot exec_command must expose a function schema");
+    };
+    let one_shot = spec
+        .parameters
+        .properties
+        .expect("one-shot schema must carry properties");
+    assert!(one_shot.contains_key("timeout_ms"));
+    assert!(
+        !one_shot.contains_key("tty"),
+        "one-shot schema must remove tty"
+    );
+    assert!(
+        !one_shot.contains_key("yield_time_ms"),
+        "one-shot schema must remove yield_time_ms"
+    );
+}
