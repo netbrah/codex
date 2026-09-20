@@ -580,8 +580,15 @@ the serving stack, is the cause).
 (:737-757) — the negative sentence splices into the raw string, not the template args.
 `multi_agents_spec.rs` is 878 LoC — already past the ~800 LoC module guidance; the edits must
 not grow the file further (one-liners only, inside existing description owners). No `.snap`
-file in `codex-rs` captures any of these descriptions or the old error message (repo-wide
-verified round 1) — C and B break no insta snapshots.
+file in `codex-rs` captures any of these descriptions as literal text or the old error message
+(repo-wide string sweep, verified round 1) — C and B break no other insta snapshots.
+(Post-landing erratum, item 6: that round-1 string sweep missed a hash-derived pin — the astra
+scenario snapshot `all__suite__scenarios__astra_async_question_and_answer.snap` pins the
+collaboration-namespace content hash derived from these descriptions rather than copying
+them, and legitimately moved with the item-5 edit (9ffeb7db7d; namespace
+`43f195d9cc99ee15`→`4fffb2a2afa835c6`, derived parent fragment `d4f3e164a92d9bf1`→
+`f80a5970748ce3ae`); it was refreshed in the item-6 closure commit that carries this erratum
+and the snapshot refresh — exact commit sha in the apex-xt2.7 bead closure note.)
 
 ### 5.2 Description edits (exact, additive, one line each)
 
