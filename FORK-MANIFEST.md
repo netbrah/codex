@@ -4,19 +4,20 @@
 > upstream merges (openai/codex main → this branch). After every ratchet, verify
 > against this manifest and update "Last verified".
 >
-> **Last verified:** 2026-09-19 (UTC) — base `f3da3861c5`
+> **Last verified:** 2026-09-19 — base `f3da3861c5`
 > (`reference/upstream-openai`) unchanged since the 2026-09-16 upstream
 > merge @ `7bcd344fa7` (ratchet verified 2026-09-17; that audit block
-> below stands, except the provider.rs and tools/src/lib.rs notes, both
-> rewritten at this re-derivation); manifest re-derived at fork
-> HEAD `10d14858c7` (apex-xt2.9 item 2). Since 2026-09-17: xt2.7 strict_int
-> helpers, xt2.9 item 1 on-prem catalogue (qwen3.8-27b + v2 flips), xt2.11
-> A/B apply-patch shape-repair, xt2.9 item 2 Proactive-default seam.
-> Both remotes (netbrah/codex + APEX/codex) in sync at `10d14858c7`; SCS
-> ff-synced (the item-3 commit re-pushes both remotes and re-syncs SCS, so
-> this holds after landing).
-> All counts below = first-hand `git diff f3da3861c5..10d14858c7
-> --name-status` (A=57, M=35).
+> below stands as-is); manifest re-derived at fork
+> HEAD `9ffeb7db7d` (apex-xt2.7 item 6, campaign closure). Since 10d14858c7:
+> xt2.9 item 3 on-prem catalogue spec doc (`c2c1b8a620`), xt2.10
+> output-normalization seam + spec (`2b60e20ac3`/`edbc5150e1`), xt2.11 item C
+> lax-retry spec (`0c560d5460`), and xt2.7 items 2-5 tool-args ratchet
+> (`cf1f8bb8ae`, `d96703897f`, `a81aa1d3a0`, `9ffeb7db7d`).
+> Both remotes (netbrah/codex + APEX/codex) in sync at `9ffeb7db7d`; SCS
+> ff-synced (the item-6 docs commit re-pushes both remotes and re-syncs
+> SCS, so this holds after landing).
+> All counts below = first-hand `git diff f3da3861c5..9ffeb7db7d
+> --name-status` (A=70, M=79; 149 total).
 
 ## Ratchet audit 2026-09-17 (pre-merge, entity-level via weave)
 
@@ -42,14 +43,14 @@ removal + `render_model_instructions` API (models-manager, codex_prompts
 crate); Guardian endpoint consolidation (codex-api); client.rs transport
 refactor; spec_plan reorganization; tools crate `output_schema`.
 
-## Fork-only files (56 added; no upstream equivalent — merge risk: none)
+## Fork-only files (69 added; no upstream equivalent — merge risk: none)
 
-Count = `git diff f3da3861c5..10d14858c7 --name-status` minus this manifest
-(self-reference). `docs/onprem-mode-catalog-spec.md` (the apex-xt2.9 campaign
-record) lands in the item-3 commit alongside this re-derivation and is not in
+Count = `git diff f3da3861c5..9ffeb7db7d --name-status` minus this manifest
+(self-reference). `docs/tool-args-ratchet-spec.md` (the apex-xt2.7 campaign
+record) lands in the item-6 commit alongside this re-derivation and is not in
 this count.
 
-### Code (9) — MUST SURVIVE
+### Code (19) — MUST SURVIVE
 
 | file | purpose |
 |---|---|
@@ -63,7 +64,18 @@ this count.
 | `codex-rs/tools/src/strict_int.rs` | strict numeric coercion helpers for tool args (apex-xt2.7) |
 | `codex-rs/tools/src/strict_int_tests.rs` | tests for above |
 
-### Docs (47) — KEEP (campaign record; zero merge risk)
+| `codex-rs/core/src/tools/handlers/args_parse.rs` | shared tool-args parse funnel: teachable parse errors with tool + parameter attribution (apex-xt2.7 item 3) |
+| `codex-rs/core/src/tools/handlers/args_parse_tests.rs` | tests for above |
+| `codex-rs/core/src/tools/code_mode/wait_handler_tests.rs` | strict-int timeout coercion tests (item 2) + deny_unknown_fields tests (item 4) |
+| `codex-rs/core/src/tools/handlers/multi_agents/wait_tests.rs` | v1 wait strict-int + D3 deny-attr tests (items 2/4) |
+| `codex-rs/core/src/tools/handlers/multi_agents_v2/wait_tests.rs` | v2 wait strict-int coercion tests (item 2) |
+| `codex-rs/core/src/tools/handlers/request_permissions_tests.rs` | D2 deny_unknown_fields tests (item 4) |
+| `codex-rs/core/src/tools/handlers/sleep_tests.rs` | strict-int duration coercion tests (items 2/4) |
+| `codex-rs/core/src/tools/handlers/test_sync_tests.rs` | strict-int coercion tests (items 2/4) |
+| `codex-rs/core/src/tools/handlers/unified_exec/write_stdin_tests.rs` | strict-int + exec env-fold tests (items 2/4) |
+| `codex-rs/core/tests/suite/tool_args_ratchet.rs` | campaign integration suite: ratchet coverage across the shared funnel (items 2-4) |
+
+### Docs (50) — KEEP (campaign record; zero merge risk)
 - `docs/responses-compat-seam.md` — seam SoT incl. §6 conflict-site map
   (the authoritative reference this manifest complements)
 - `docs/responses-compat-apply-patch-task-breakdown.md`,
@@ -74,11 +86,19 @@ this count.
 - `docs/vllm-glm-toolcall-research.md` — vLLM source research (prior seat)
 - `docs/tool-args-type-error-census.md` — type-error census + fix plan (apex-xt2.2)
 
-## Fork modifications to shared files (35)
+- `docs/onprem-mode-catalog-spec.md` — on-prem mode catalogue spec (apex-xt2.9
+  item 3, `c2c1b8a620`)
+- `docs/apply-patch-lax-retry-spec.md` — apply-patch lax-retry spec v1.4 +
+  live-pin re-derivation + acceptance record (apex-xt2.11 item C,
+  `0c560d5460`)
+- `docs/tool-output-normalization-spec.md` — tool-output normalization spec
+  (apex-xt2.10, `edbc5150e1`)
+
+## Fork modifications to shared files (79)
 
 ### 10 also modified upstream in this window — per-file strategy (table above)
 
-### 25 we modified, upstream UNTOUCHED in the merged 2026-09-17 window (re-derive the split at the next ratchet)
+### 69 we modified, upstream UNTOUCHED in the merged 2026-09-17 window (split re-derived 2026-09-19 at 9ffeb7db7d)
 
 | file | what we changed | class |
 |---|---|---|
@@ -92,12 +112,13 @@ this count.
 | `codex-rs/core/src/tools/handlers/apply_patch.rs` | function-tool apply_patch handler (ayl.52) + repair note as leading tool-output line (apex-xt2.11 item B) | MUST SURVIVE |
 | `codex-rs/core/src/tools/handlers/apply_patch_spec.rs` | format-teaching patch-param description (P1) | MUST SURVIVE |
 | `codex-rs/core/src/tools/handlers/apply_patch_spec_tests.rs`, `apply_patch_tests.rs` | seam tests (ayl.52) + repair-note tests (apex-xt2.11) | MUST SURVIVE |
-| `codex-rs/core/src/tools/handlers/mod.rs` | apply_patch handler module wiring (`FunctionApplyPatchHandler` re-export); queued same-file site: teachable parse error in `parse_arguments` (apex-xt2.7 CODEX-TOOLARGS-FIX-1 — extend this row's purpose when the hunk lands) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/mod.rs` | apply_patch handler module wiring (`FunctionApplyPatchHandler` re-export); landed in item 3: teachable parse error in `parse_arguments` with tool + parameter attribution (apex-xt2.7 CODEX-TOOLARGS-FIX-1) | MUST SURVIVE |
 | `codex-rs/core/src/tools/router.rs` | apply_patch routing | MUST SURVIVE |
 | `codex-rs/core/tests/suite/apply_patch_cli.rs` | CLI-level seam tests | MUST SURVIVE |
 | `codex-rs/core/tests/suite/multi_agent_mode.rs` | fork Proactive-default expectation rows (apex-xt2.9 item 2, spec §7.5 rows 1–4, 10) | MUST SURVIVE (re-derive at ratchet; expectations encode fork behavior) |
 | `codex-rs/core/tests/suite/step_settings.rs` | fork Proactive-default expectation rows (apex-xt2.9 item 2, spec §7.5; final len==2 double-occurrence assert) | MUST SURVIVE (re-derive at ratchet; expectations encode fork behavior) |
-| `codex-rs/core/tests/suite/subagent_notifications.rs` | fork Proactive-default expectation row (apex-xt2.9 item 2, spec §7.5) | MUST SURVIVE (re-derive at ratchet; expectations encode fork behavior) |
+| `codex-rs/core/tests/suite/subagent_notifications.rs` | fork Proactive-default expectation row (apex-xt2.9 item 2, spec §7.5) + item-4 deny-attr expectation update | MUST SURVIVE (re-derive at ratchet; expectations encode fork behavior) |
+
 | `codex-rs/app-server/tests/suite/v2/turn_start.rs` | row 6/7 developer-message asserts via test-local `normalized_developer_message_texts` helper (fork wire normalization; apex-xt2.9 item 2, spec §7.5) | MUST SURVIVE (re-derive at ratchet; expectations encode fork behavior) |
 | `codex-rs/model-provider/src/amazon_bedrock/mod.rs` | capability line | MUST SURVIVE |
 | `codex-rs/models-manager/models.json` | 5 fork-added entries (net +438/−18 over base): fork-added glm-5.2 + grok-4.6 and re-added gpt-5.4-mini + gpt-5.2 (`799ec98053`, 374+/18−; the gpt pair was retired upstream in `eb7bd64ef9`) + qwen3.8-27b with the on-prem-trio v2 flips (apex-xt2.9 item 1, `c5c61277af`, 66+/2−) — all three on-prem entries at `multi_agent_version: "v2"`; the baseline commit also modified 8 pre-existing entries (base_instructions payloads; gpt-5.4/gpt-5.5 additionally carry the `model_messages` `{{ personality }}` template rewrite) — registered in the seam SoT (`docs/responses-compat-seam.md` §4, row 5); a manifest-only ratchet must not drop them | MUST SURVIVE (watch: upstream owns this file — re-apply the on-prem trio as one reviewed hunk at ratchet; the gpt-5.4-mini/gpt-5.2 re-adds are deliberate operator-directed fork entries from the baseline commit — keep unless the operator prunes them) |
@@ -105,6 +126,32 @@ this count.
 | `codex-rs/protocol/src/tool_name.rs` | `ToolName::from_response_fields` (recovers namespace from flattened dotted tool names; vLLM) + `mod tests` decl | MUST SURVIVE |
 | `codex-rs/tools/src/tool_spec.rs`, `tool_spec_tests.rs` | function-tool spec type for apply_patch + `flatten_namespace_specs` | MUST SURVIVE |
 | `AGENTS.md` | 116-line delta (`799ec98053`): a 107-line "Working Principles for AI Agents" SDD doc (mandatory spec → multi-agent review → TDD workflow, principles 0–4) PREPENDED + a claude-mem harness context block APPENDED (committed at operator direction) | merge-careful (upstream also edits AGENTS.md; the SDD doc is operator-mandated and must survive — re-derive at ratchet) |
+
+Landed 10d14858c7..9ffeb7db7d (apex-xt2.7 items 2-5; all "MUST SURVIVE" —
+the tool-args ratchet is fork behavior upstream has no coverage for):
+
+| file | what we changed | class |
+|---|---|---|
+| `codex-rs/core/src/tools/code_mode/wait_handler.rs` | strict-int timeout coercion (item 2) + deny_unknown_fields on model-facing struct (item 4) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/multi_agents/wait.rs` | strict-int timeout coercion (item 2) + D3 deny_unknown_fields (item 4) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/sleep.rs` | strict-int duration coercion (item 2) + deny_unknown_fields (item 4) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/test_sync.rs` | strict-int coercion (item 2) + deny_unknown_fields (item 4) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/unified_exec.rs` | strict-int coercion (item 2) + exec_command env fold (item 4) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs` | strict-int coercion (item 2) + deny_unknown_fields (item 4) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | teachable parse-error funnel site (item 3 shared-funnel sweep) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/unified_exec_tests.rs` | sweep test updates: strict coercion / teachable errors / deny attrs (items 2-4) | MUST SURVIVE |
+| `codex-rs/core/tests/suite/mod.rs` | `mod tool_args_ratchet;` decl (item 2) | MUST SURVIVE |
+| `codex-rs/rollout-trace/src/reducer/tool/terminal.rs`, `codex-rs/rollout-trace/src/reducer/tool/terminal_tests.rs` | D5 mirror: rollout-trace terminal reducer + tests reflecting the strict-coerced tool args (item 2) | MUST SURVIVE (mirror of core item-2 behavior) |
+| `codex-rs/core/src/tools/handlers/dynamic.rs` | teachable parse-error funnel site (item 3) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/mcp_resource.rs`, `codex-rs/core/src/tools/handlers/mcp_resource/{list_mcp_resource_templates,list_mcp_resources,read_mcp_resource}.rs`, `codex-rs/core/src/tools/handlers/mcp_resource_tests.rs` | teachable parse-error funnel sites (item 3) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/multi_agents/{close_agent,resume_agent,send_input,spawn}.rs`, `codex-rs/core/src/tools/handlers/multi_agents_tests.rs` | teachable parse-error funnel sites (item 3) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/multi_agents_v2/{followup_task,interrupt_agent,list_agents,send_message,spawn,wait}.rs` | teachable parse-error funnel sites (item 3); `wait.rs` also strict-int timeout coercion (item 2) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/{plan,request_permissions,request_plugin_install,request_user_input,request_user_input_async,request_user_input_spec,send_message_to_user_async,view_image,wait_for_environment}.rs` | teachable parse-error funnel sites (item 3); `request_plugin_install.rs` + `request_user_input_spec.rs` also carry item-4 deny_unknown_fields | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/request_plugin_install_tests.rs` | item-4 deny-attr D2 tests (core side) | MUST SURVIVE |
+| `codex-rs/tools/src/request_plugin_install.rs`, `codex-rs/tools/src/request_plugin_install_tests.rs` | item-4 deny_unknown_fields on the model-facing spec struct + tests (tools side) | MUST SURVIVE |
+| `codex-rs/core/tests/suite/direct_tool_metadata.rs`, `codex-rs/core/tests/suite/tool_harness.rs` | funnel expectation updates (item 3) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` | (C) v2 spec-level negative field guidance in collaboration tool descriptions — 4 additive one-liners, file stays 878 LoC (item 5, ratchet C) | MUST SURVIVE |
+| `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs` | ratchet-C negative-guidance test + exact-string description pin (item 5) | MUST SURVIVE |
 
 ## MUST SURVIVE (feature level)
 
@@ -139,22 +186,26 @@ this count.
    `turn_start.rs` (all registered above). Keep the upstream machinery
    upstream-shaped; re-derive the disjunct at ratchet if upstream reworks
    the selector.
+6. **Tool-args ratchet (apex-xt2.7)** — fork-owned hardening of model-facing
+   tool arguments: `strict_int` coercion helpers (fork-only, re-exported
+   from `tools/src/lib.rs`), teachable parse errors with tool + parameter
+   attribution through the shared funnel (`handlers/args_parse.rs`),
+   deny_unknown_fields on the model-facing args structs, and v2
+   spec-level negative field guidance (`multi_agents_spec.rs`); the
+   rollout-trace terminal reducer mirrors the coerced behavior (D5). All
+   rows registered above; spec SoT = `docs/tool-args-ratchet-spec.md`.
 
 ## Pending known future divergence (re-checked 2026-09-19)
 
-- `apex-xt2.7` CODEX-TOOLARGS-FIX-1 (partially landed as of 2026-09-19):
-  the `strict_int` coercion helpers landed at `02beac536d` (registered
-  above: `tools/src/strict_int.rs` + re-exports). Still queued — see
-  `docs/tool-args-type-error-census.md`: strict numeric coercion on 11
-  fields (`core/src/tools/handlers/unified_exec.rs`,
-  `unified_exec/write_stdin.rs`, `multi_agents_v2/wait.rs`, `sleep.rs`,
-  `codex-rs/core/src/tools/code_mode/wait_handler.rs`), teachable parse error
-  (`handlers/mod.rs::parse_arguments`), v2 tool spec teaching
-  (`multi_agents_spec.rs` + `multi_agents_v2/` specs). 7 of 8 sites are on
-  currently UNMODIFIED upstream files; the `handlers/mod.rs`
-  (`parse_arguments`) site is in a file already a registered fork
-  modification (row above). Add rows for the 7 unmodified files to the
-  table above after it lands.
+- `apex-xt2.7` CODEX-TOOLARGS-FIX-1: **fully landed 2026-09-19** — strict-int
+  coercion (helpers at `02beac536d`; 11 fields via items 2-3), teachable
+  parse error in `handlers/mod.rs::parse_arguments` (item 3), deny_unknown
+  fields on model-facing structs (item 4), v2 spec-level negative guidance
+  (item 5) — commits `cf1f8bb8ae`, `d96703897f`, `a81aa1d3a0`,
+  `9ffeb7db7d`; every row registered above. Spec SoT
+  `docs/tool-args-ratchet-spec.md` lands in the item-6 commit alongside
+  this re-derivation (not in the counts above). Nothing of this work is
+  still queued.
 
 ## Ratchet runbook (next pull)
 
