@@ -1406,8 +1406,8 @@
           "description": "Solid balance of reasoning depth and latency"
         },
         {
-          "effort": "high",
-          "description": "Maximizes reasoning depth for complex problems"
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
         }
       ],
       "shell_type": "unified_exec",

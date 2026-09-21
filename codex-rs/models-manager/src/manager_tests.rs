@@ -1706,8 +1706,9 @@ async fn get_model_info_resolves_qwen3_8_27b_bundled_entry() {
     );
 
     // The entry must be the glm-5.2 template with exactly the qwen divergences
-    // (slug/display_name/description, xhigh default + four supported levels,
-    // multi_agent_version v2, priority 52).
+    // (slug/display_name/description, xhigh default + four supported levels
+    // including high, multi_agent_version v2, priority 52). glm-5.2 itself
+    // supports low/medium/xhigh only (proxy-aligned set).
     let mut expected = manager.get_model_info("glm-5.2", &config).await;
     expected.slug = "qwen3.8-27b".to_string();
     expected.display_name = "Qwen3.8-27B".to_string();
