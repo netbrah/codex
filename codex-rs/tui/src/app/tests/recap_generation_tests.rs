@@ -197,7 +197,11 @@ stream_max_retries = 0
         .as_array()
         .and_then(|items| items.iter().rfind(|item| item["role"] == "user"))
         .and_then(|item| item["content"].as_array())
-        .and_then(|content| content.iter().find(|item| item["type"] == "input_text"))
+        .and_then(|content| {
+            content
+                .iter()
+                .find(|item| matches!(item["type"].as_str(), Some("input_text" | "text")))
+        })
         .and_then(|item| item["text"].as_str())
         .expect("recap prompt");
     assert!(

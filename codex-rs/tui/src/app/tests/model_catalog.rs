@@ -128,8 +128,8 @@ fn model_presets_with_test_upgrades() -> Vec<ModelPreset> {
         .expect("current model template")
         .clone();
     // Catalog-provided migration metadata is independent of the retired model's prompts.
-    preset.id = "gpt-5.2".to_string();
-    preset.model = "gpt-5.2".to_string();
+    preset.id = "test-gpt-5.2".to_string();
+    preset.model = "test-gpt-5.2".to_string();
     preset.upgrade = Some(ModelUpgrade {
         id: "gpt-5.5".to_string(),
         migration_config_key: "hide_test_migration_prompt".to_string(),
@@ -193,22 +193,25 @@ fn retired_model_migration_respects_catalog_metadata() {
     let mut presets = model_presets_with_test_upgrades();
     let current = presets
         .iter_mut()
-        .find(|preset| preset.model == "gpt-5.2")
+        .find(|preset| preset.model == "test-gpt-5.2")
         .expect("test preset");
-    current.id = "gpt-5.4-mini".to_string();
-    current.model = "gpt-5.4-mini".to_string();
+    current.id = "test-gpt-5.4-mini".to_string();
+    current.model = "test-gpt-5.4-mini".to_string();
     let expected = current.upgrade.clone();
     assert_eq!(
-        model_upgrade_for_migration("gpt-5.4-mini", &presets),
+        model_upgrade_for_migration("test-gpt-5.4-mini", &presets),
         expected
     );
 
     presets
         .iter_mut()
-        .find(|preset| preset.model == "gpt-5.4-mini")
+        .find(|preset| preset.model == "test-gpt-5.4-mini")
         .expect("catalog preset")
         .upgrade = None;
-    assert_eq!(model_upgrade_for_migration("gpt-5.4-mini", &presets), None);
+    assert_eq!(
+        model_upgrade_for_migration("test-gpt-5.4-mini", &presets),
+        None
+    );
 }
 
 #[test]
@@ -519,7 +522,7 @@ async fn model_migration_prompt_shows_for_hidden_model() {
     let mut available_models = model_presets_with_test_upgrades();
     let current = available_models
         .iter_mut()
-        .find(|preset| preset.model == "gpt-5.2")
+        .find(|preset| preset.model == "test-gpt-5.2")
         .expect("gpt-5.2 preset present");
     current.show_in_picker = false;
     let current = current.clone();

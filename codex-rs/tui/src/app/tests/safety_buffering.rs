@@ -397,7 +397,9 @@ stream_max_retries = 0
         None
     );
 
-    insta::assert_snapshot!(app.chat_widget.composer_text_with_pending(), @"");
+    insta::allow_duplicates! {
+        insta::assert_snapshot!(app.chat_widget.composer_text_with_pending(), @"");
+    }
     assert!(
         std::iter::from_fn(|| app_event_rx.try_recv().ok())
             .all(|event| !matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. })))
@@ -444,7 +446,12 @@ fn user_input_texts(body: &Value) -> Vec<String> {
         .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
         .filter_map(|item| item.get("content").and_then(Value::as_array))
         .flatten()
-        .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_text"))
+        .filter(|span| {
+            matches!(
+                span.get("type").and_then(Value::as_str),
+                Some("input_text" | "text")
+            )
+        })
         .filter_map(|span| span.get("text").and_then(Value::as_str).map(str::to_owned))
         .collect()
 }
