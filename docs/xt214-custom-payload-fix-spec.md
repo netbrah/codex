@@ -657,5 +657,18 @@ Stage 5 (TDD execution):
   (c) the full codex-exec suite (changed crate's main consumer binary)
   re-runs after gate 1 as the additional anchor. If gate 1 surfaces any
   failure, the gate-1 adjudication protocol (HEAD control / isolation
-  re-runs) applies to it.
-- T4 (commit/push/sync/bead): pending.
+  re-runs) applies to it. Mac apply_patch module: 27/27 PASS post-clippy.
+  SCS full codex-exec suite: 78/78 PASS.
+  GATE 4 (clippy, Mac): exit 0. Auto-fixed 3 OUT-OF-SCOPE files
+  (args_parse.rs let-chains/is_multiple_of, openai_file_mcp.rs unused
+  import, tool_args_ratchet.rs) — REVERTED (pathspec-strict; clippy 1.95
+  let-chains would not compile on SCS 1.94.1); recorded as follow-up
+  candidate. The two owned files were untouched by clippy.
+- T4 (commit/push/sync/bead): DONE 2026-09-22.
+  Commit 645be103f5557346f691a14b6f09a8a09332c355 (pathspec-strict: the
+  two owned files + this spec, 889 ins/52 del). Pushed + ls-remote
+  verified at both remotes (fork/APEX bitbucket + netbrah github). SCS
+  ff-synced to the same SHA (overlay discarded after blob-identity
+  proof; M codex-rs/.cargo/config.toml preserved, never committed).
+  Bead apex-xt2.14 left OPEN: fix landed, release re-verify pending.
+  ALL T3 GATES GREEN. xt2.14 stage 5 (TDD) COMPLETE.
