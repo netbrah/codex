@@ -4,6 +4,7 @@ use codex_exec_server::LOCAL_FS;
 use codex_login::CodexAuth;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::SearchToolCallParams;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
@@ -447,23 +448,44 @@ fn with_environment_id_line_leaves_malformed_patch_unchanged() {
 }
 
 #[test]
-fn function_apply_patch_patch_text_extracts_patch_argument() {
+fn apply_patch_handler_patch_text_extracts_patch_argument() {
     let payload = ToolPayload::Function {
         arguments: r#"{"patch":"*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n","environment_id":"env-1"}"#
             .to_string(),
     };
     assert_eq!(
-        function_apply_patch_patch_text(&payload).as_deref(),
+        apply_patch_handler_patch_text(&payload).as_deref(),
         Some("*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n")
     );
 }
 
 #[test]
-fn function_apply_patch_patch_text_rejects_non_function_payloads() {
+fn apply_patch_handler_patch_text_extracts_custom_input_verbatim() {
+    let input = "*** Begin Patch\n*** End Patch\n".to_string();
     let payload = ToolPayload::Custom {
-        input: "*** Begin Patch\n*** End Patch\n".to_string(),
+        input: input.clone(),
     };
-    assert_eq!(function_apply_patch_patch_text(&payload), None);
+    assert_eq!(
+        apply_patch_handler_patch_text(&payload),
+        Some(input),
+        "the extractor must return the Custom input verbatim (no JSON sniff)"
+    );
+}
+
+#[test]
+fn apply_patch_handler_patch_text_extracts_custom_input_json_shaped_verbatim() {
+    // The exact wire shape the s5.2-rejected "JSON sniff" design would have
+    // parsed (a JSON object with a string `patch` field): the extractor must
+    // still return the raw JSON string verbatim, never the decoded patch.
+    let input = r#"{"patch":"*** Begin Patch\n*** End Patch\n"}"#.to_string();
+    let payload = ToolPayload::Custom {
+        input: input.clone(),
+    };
+    assert_eq!(
+        apply_patch_handler_patch_text(&payload),
+        Some(input),
+        "a JSON-shaped Custom input must still be returned verbatim (sniff rejected, s5.2)"
+    );
 }
 
 #[tokio::test]
@@ -503,6 +525,143 @@ async fn function_apply_patch_rejects_non_string_patch_argument_with_teachable_e
         FunctionCallError::RespondToModel(
             "apply_patch 'patch' argument must be a string containing the full patch text starting with '*** Begin Patch'".to_string(),
         )
+    );
+}
+
+#[tokio::test]
+async fn function_apply_patch_handler_accepts_custom_payload() {
+    // Unit-level mirror of triad run A: a Custom (custom_tool_call)
+    // apply_patch payload must apply. F1 shape (spec §1.1): raw markdown
+    // Add-File — content lines carry no per-line `+` prefix and the first
+    // content line is an H1. The literal mirrors the F1 test, including
+    // the trailing newline after `*** End Patch` that `sample_patch()`
+    // lacks.
+    let patch = "*** Begin Patch\n*** Add File: xt214-t1/custom-payload-add.md\n# XT2.14 T1 — CUSTOM PAYLOAD ADD (RED PHASE)\nFreeze holds until the T1 RED evidence lands.\n\n| field | value |\n| --- | --- |\n*** End Patch\n";
+    let payload = ToolPayload::Custom {
+        input: patch.to_string(),
+    };
+    // The default test session is read-only with approval on request, so this
+    // write would stall on an unanswered approval prompt; build the session
+    // with the integration harness shape instead.
+    let (session, turn, _events) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.permissions = Permissions::from_approval_and_profile(
+                Constrained::allow_any(AskForApproval::Never),
+                Constrained::allow_only(PermissionProfile::Disabled),
+            )
+            .expect("test permissions should be valid");
+        },
+    )
+    .await;
+    let (invocation, cwd) = invocation_from_session(payload, session, turn).await;
+    let handler = FunctionApplyPatchHandler::default();
+
+    match handler.handle(invocation).await {
+        Ok(_) => {}
+        Err(err) => panic!("a Custom-payload apply_patch call must apply: {err:?}"),
+    }
+
+    let file_path = cwd.to_path_buf().join("xt214-t1/custom-payload-add.md");
+    assert_eq!(
+        std::fs::read_to_string(&file_path)
+            .expect("the Custom-payload Add-File must create the file"),
+        "# XT2.14 T1 — CUSTOM PAYLOAD ADD (RED PHASE)\nFreeze holds until the T1 RED evidence lands.\n\n| field | value |\n| --- | --- |\n"
+    );
+    let _ = std::fs::remove_file(&file_path);
+    let _ = std::fs::remove_dir(cwd.to_path_buf().join("xt214-t1"));
+}
+
+#[test]
+fn function_apply_patch_matches_kind_accepts_function_and_custom() {
+    let handler = FunctionApplyPatchHandler::default();
+    assert!(
+        handler.matches_kind(&ToolPayload::Function {
+            arguments: r#"{"patch":"*** Begin Patch\n*** End Patch\n"}"#.to_string(),
+        }),
+        "matches_kind must accept Function payloads"
+    );
+    assert!(
+        handler.matches_kind(&ToolPayload::Custom {
+            input: "*** Begin Patch\n*** End Patch\n".to_string(),
+        }),
+        "matches_kind must accept Custom payloads"
+    );
+    assert!(
+        !handler.matches_kind(&ToolPayload::ToolSearch {
+            arguments: SearchToolCallParams {
+                query: "apply_patch".to_string(),
+                limit: None,
+            },
+        }),
+        "matches_kind must reject ToolSearch payloads"
+    );
+}
+
+#[tokio::test]
+async fn function_apply_patch_pre_and_post_hook_payloads_cover_both_payload_kinds() {
+    let patch = "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n";
+    let function_payload = ToolPayload::Function {
+        arguments: json!({ "patch": patch }).to_string(),
+    };
+    let custom_payload = ToolPayload::Custom {
+        input: patch.to_string(),
+    };
+    let handler = FunctionApplyPatchHandler::default();
+    let output = ApplyPatchToolOutput::from_text("Success. Updated files.".to_string());
+
+    for payload in [function_payload, custom_payload] {
+        let (invocation, _) = invocation_for_payload(payload.clone()).await;
+        assert_eq!(
+            handler.pre_tool_use_payload(&invocation),
+            Some(PreToolUsePayload {
+                tool_name: HookToolName::apply_patch(),
+                tool_input: json!({ "command": patch }),
+            }),
+            "pre_tool_use_payload must report the patch command for both payload kinds"
+        );
+        assert_eq!(
+            handler.post_tool_use_payload(&invocation, &output),
+            Some(PostToolUsePayload {
+                tool_name: HookToolName::apply_patch(),
+                tool_use_id: "call-apply-patch".to_string(),
+                tool_input: json!({ "command": patch }),
+                tool_response: json!("Success. Updated files."),
+            }),
+            "post_tool_use_payload must report the patch command for both payload kinds"
+        );
+    }
+}
+
+#[tokio::test]
+async fn function_apply_patch_with_updated_hook_input_rewrites_custom_payload() {
+    let payload = ToolPayload::Custom {
+        input: "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n".to_string(),
+    };
+    let (invocation, _) = invocation_for_payload(payload).await;
+    let handler = FunctionApplyPatchHandler::default();
+    let updated_patch = "*** Begin Patch\n*** Add File: b.txt\n+y\n*** End Patch\n";
+
+    let updated = handler
+        .with_updated_hook_input(invocation, json!({ "command": updated_patch }))
+        .expect("a hook-updated command must be accepted");
+    let ToolPayload::Custom { input } = &updated.payload else {
+        panic!("with_updated_hook_input must keep the Custom payload kind");
+    };
+    assert_eq!(
+        input.as_str(),
+        updated_patch,
+        "the Custom input must be rewritten to the hook-updated patch"
+    );
+}
+
+#[test]
+fn function_apply_patch_handler_diff_consumer_is_some() {
+    let handler = FunctionApplyPatchHandler::default();
+    assert!(
+        handler.create_diff_consumer().is_some(),
+        "the function-form handler must expose a diff consumer, like ApplyPatchHandler"
     );
 }
 

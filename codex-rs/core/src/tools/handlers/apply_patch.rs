@@ -479,8 +479,10 @@ async fn run_apply_patch_text(
 
 /// Function-tool form of `apply_patch` for deployments whose responses
 /// implementation does not support grammar-constrained custom tools (see
-/// docs/responses-compat-seam.md). Parses the JSON arguments and executes
-/// the same shared patch path as [`ApplyPatchHandler`].
+/// docs/responses-compat-seam.md). Accepts both `ToolPayload::Function`
+/// (JSON arguments) and `ToolPayload::Custom` (freeform text, used
+/// verbatim) payloads for wire-shape tolerance at the compat seam, then
+/// executes the same shared patch path as [`ApplyPatchHandler`].
 #[derive(Default)]
 pub struct FunctionApplyPatchHandler {
     multi_environment: bool,
@@ -526,36 +528,42 @@ impl FunctionApplyPatchHandler {
             ..
         } = invocation;
 
-        let ToolPayload::Function { arguments } = payload else {
-            return Err(FunctionCallError::RespondToModel(
-                "apply_patch function handler received unsupported payload".to_string(),
-            ));
-        };
-        let value = serde_json::from_str::<serde_json::Value>(&arguments).map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "apply_patch arguments are not valid JSON: {err}"
-            ))
-        })?;
-        let patch_value = value.get("patch").ok_or_else(|| {
-            FunctionCallError::RespondToModel(
-                "apply_patch is missing the required 'patch' argument; pass the full patch text starting with '*** Begin Patch' in 'patch'".to_string(),
-            )
-        })?;
-        let patch_input = patch_value
-            .as_str()
-            .ok_or_else(|| {
-                FunctionCallError::RespondToModel(
-                    "apply_patch 'patch' argument must be a string containing the full patch text starting with '*** Begin Patch'".to_string(),
-                )
-            })?
-            .to_string();
-        let patch_input = match value
-            .get("environment_id")
-            .and_then(serde_json::Value::as_str)
-            .filter(|id| !id.is_empty())
-        {
-            Some(environment_id) => with_environment_id_line(patch_input, environment_id),
-            None => patch_input,
+        let patch_input = match payload {
+            ToolPayload::Function { arguments } => {
+                let value =
+                    serde_json::from_str::<serde_json::Value>(&arguments).map_err(|err| {
+                        FunctionCallError::RespondToModel(format!(
+                            "apply_patch arguments are not valid JSON: {err}"
+                        ))
+                    })?;
+                let patch_value = value.get("patch").ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "apply_patch is missing the required 'patch' argument; pass the full patch text starting with '*** Begin Patch' in 'patch'".to_string(),
+                    )
+                })?;
+                let patch_input = patch_value
+                    .as_str()
+                    .ok_or_else(|| {
+                        FunctionCallError::RespondToModel(
+                            "apply_patch 'patch' argument must be a string containing the full patch text starting with '*** Begin Patch'".to_string(),
+                        )
+                    })?
+                    .to_string();
+                match value
+                    .get("environment_id")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|id| !id.is_empty())
+                {
+                    Some(environment_id) => with_environment_id_line(patch_input, environment_id),
+                    None => patch_input,
+                }
+            }
+            ToolPayload::Custom { input } => input,
+            ToolPayload::ToolSearch { .. } => {
+                return Err(FunctionCallError::RespondToModel(
+                    "apply_patch function handler received unsupported payload".to_string(),
+                ));
+            }
         };
         run_apply_patch_text(
             self.multi_environment,
@@ -595,30 +603,36 @@ fn with_environment_id_line(patch_input: String, environment_id: &str) -> String
     out
 }
 
-/// Extracts the patch text from a function-form apply_patch payload for hook
-/// reporting (same `{"command": ...}` shape as the custom path).
-fn function_apply_patch_patch_text(payload: &ToolPayload) -> Option<String> {
-    let ToolPayload::Function { arguments } = payload else {
-        return None;
-    };
-    serde_json::from_str::<serde_json::Value>(arguments)
-        .ok()?
-        .get("patch")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
+/// Extracts the patch text from an apply_patch payload for hook reporting
+/// (same `{"command": ...}` shape as the custom path): the JSON `patch`
+/// string for a Function payload, the Custom `input` verbatim, and None for
+/// the ToolSearch form (unreachable — `matches_kind` gates dispatch).
+fn apply_patch_handler_patch_text(payload: &ToolPayload) -> Option<String> {
+    match payload {
+        ToolPayload::Function { arguments } => serde_json::from_str::<serde_json::Value>(arguments)
+            .ok()?
+            .get("patch")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        ToolPayload::Custom { input } => Some(input.clone()),
+        ToolPayload::ToolSearch { .. } => None,
+    }
 }
 
 impl CoreToolRuntime for FunctionApplyPatchHandler {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
-        matches!(payload, ToolPayload::Function { .. })
+        matches!(
+            payload,
+            ToolPayload::Function { .. } | ToolPayload::Custom { .. }
+        )
     }
 
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
-        None
+        Some(Box::<ApplyPatchArgumentDiffConsumer>::default())
     }
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        function_apply_patch_patch_text(&invocation.payload).map(|patch| PreToolUsePayload {
+        apply_patch_handler_patch_text(&invocation.payload).map(|patch| PreToolUsePayload {
             tool_name: HookToolName::apply_patch(),
             tool_input: serde_json::json!({ "command": patch }),
         })
@@ -634,6 +648,9 @@ impl CoreToolRuntime for FunctionApplyPatchHandler {
             ToolPayload::Function { .. } => ToolPayload::Function {
                 arguments: serde_json::json!({ "patch": patch }).to_string(),
             },
+            ToolPayload::Custom { .. } => ToolPayload::Custom {
+                input: patch.to_string(),
+            },
             payload => payload,
         };
         Ok(invocation)
@@ -644,7 +661,7 @@ impl CoreToolRuntime for FunctionApplyPatchHandler {
         invocation: &ToolInvocation,
         result: &dyn crate::tools::context::ToolOutput,
     ) -> Option<PostToolUsePayload> {
-        let patch = function_apply_patch_patch_text(&invocation.payload)?;
+        let patch = apply_patch_handler_patch_text(&invocation.payload)?;
         let tool_response =
             result.post_tool_use_response(&invocation.call_id, &invocation.payload)?;
         Some(PostToolUsePayload {
