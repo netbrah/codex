@@ -219,19 +219,31 @@ impl ResponsesRequest {
             .to_string()
     }
 
-    /// Returns all `input_text` spans from `message` inputs for the provided role.
+    /// Returns all `input_text` and `text` spans from `message` inputs for the provided role.
+    ///
+    /// Matches both pre-normalization (`input_text`) and post-normalization (`text`) spans, so
+    /// the helper observes requests whether or not `normalize_content_types` ran
+    /// (apex-xt2.13 item A).
     pub fn message_input_texts(&self, role: &str) -> Vec<String> {
         self.inputs_of_type("message")
             .into_iter()
             .filter(|item| item.get("role").and_then(Value::as_str) == Some(role))
             .filter_map(|item| item.get("content").and_then(Value::as_array).cloned())
             .flatten()
-            .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_text"))
+            .filter(|span| {
+                matches!(
+                    span.get("type").and_then(Value::as_str),
+                    Some("input_text" | "text")
+                )
+            })
             .filter_map(|span| span.get("text").and_then(Value::as_str).map(str::to_owned))
             .collect()
     }
 
-    /// Returns `input_text` spans grouped by `message` input for the provided role.
+    /// Returns `input_text` and `text` spans grouped by `message` input for the provided role.
+    ///
+    /// Matches both pre-normalization (`input_text`) and post-normalization (`text`) spans
+    /// (apex-xt2.13 item A).
     pub fn message_input_text_groups(&self, role: &str) -> Vec<Vec<String>> {
         self.inputs_of_type("message")
             .into_iter()
@@ -240,7 +252,12 @@ impl ResponsesRequest {
             .map(|content| {
                 content
                     .into_iter()
-                    .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_text"))
+                    .filter(|span| {
+                        matches!(
+                            span.get("type").and_then(Value::as_str),
+                            Some("input_text" | "text")
+                        )
+                    })
                     .filter_map(|span| span.get("text").and_then(Value::as_str).map(str::to_owned))
                     .collect()
             })
@@ -475,6 +492,26 @@ mod tests {
             body: serde_json::to_vec(&serde_json::json!({ "input": input }))
                 .expect("serialize request body"),
         })
+    }
+
+    #[test]
+    fn message_input_texts_accepts_input_text_and_text_spans() {
+        let request = request_with_input(serde_json::json!([{
+            "type": "message",
+            "role": "developer",
+            "content": [
+                { "type": "input_text", "text": "first span" },
+                { "type": "text", "text": "second span" }
+            ]
+        }]));
+        assert_eq!(
+            request.message_input_texts("developer"),
+            vec!["first span".to_string(), "second span".to_string()]
+        );
+        assert_eq!(
+            request.message_input_text_groups("developer"),
+            vec![vec!["first span".to_string(), "second span".to_string()]]
+        );
     }
 
     #[test]

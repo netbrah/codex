@@ -253,6 +253,7 @@ fn sse_event(event: Value) -> String {
     responses::sse(vec![event])
 }
 
+// apex-xt2.13 item A: migrating the 13 call sites to the shared helper is item A2 follow-up.
 fn message_input_texts(body: &Value, role: &str) -> Vec<String> {
     body.get("input")
         .and_then(Value::as_array)
@@ -262,7 +263,12 @@ fn message_input_texts(body: &Value, role: &str) -> Vec<String> {
         .filter(|item| item.get("role").and_then(Value::as_str) == Some(role))
         .filter_map(|item| item.get("content").and_then(Value::as_array))
         .flatten()
-        .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_text"))
+        .filter(|span| {
+            matches!(
+                span.get("type").and_then(Value::as_str),
+                Some("input_text" | "text")
+            )
+        })
         .filter_map(|span| span.get("text").and_then(Value::as_str).map(str::to_owned))
         .collect()
 }
